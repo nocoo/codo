@@ -1,15 +1,13 @@
 # 01 - System Design
 
-> Codo — macOS menubar resident app providing a CLI interface for local Claude Code hooks to display system toast notifications.
+> Codo — Two-layer system: a Swift macOS menubar daemon + a TypeScript CLI. Claude Code hooks call the CLI, which sends messages to the daemon via Unix Domain Socket, and the daemon displays macOS toast notifications.
 
 ## Overview
 
-Codo is a **pure Swift menubar app** that:
+Two separate programs:
 
-1. Displays a persistent **SF Symbol icon** in the macOS status bar
-2. Listens on a **Unix Domain Socket** for incoming messages
-3. Maps received messages to **macOS system toast notifications** via `UNUserNotificationCenter`
-4. Provides a **CLI mode** (same binary) that sends JSON messages to the socket
+1. **Swift menubar app** (`Codo.app`) — daemon, listens on UDS, shows toast
+2. **TypeScript CLI** (`codo`) — Bun script, reads args/stdin, sends to UDS
 
 ### Call Flow
 
@@ -17,107 +15,85 @@ Codo is a **pure Swift menubar app** that:
 Claude Code hook
     │
     ▼
-codo CLI (stdin JSON)
+codo CLI (TypeScript / Bun)
+    │  codo "Build Done" "All tests passed"
+    │  — or —
     │  echo '{"title":"Build Done","body":"All tests passed"}' | codo
     ▼
 Unix Domain Socket (~/.codo/codo.sock)
     │
     ▼
-codo menubar app (resident daemon)
+Codo.app (Swift menubar daemon)
     │
     ▼
-macOS UNUserNotificationCenter → system toast
+UNUserNotificationCenter → macOS system toast
 ```
 
 ## Architecture
 
-### Single Binary, Two Modes
-
-One SPM executable target. Two modes only:
+### Two Layers, Clear Boundary
 
 ```
-echo '{}' | codo  ← piped stdin → CLI mode: send to socket, exit
-codo --help       ← flag        → print usage, exit
-codo --version    ← flag        → print version, exit
-codo              ← anything else → print "use: open /Applications/Codo.app", exit(1)
+┌─────────────────────────────────────────────────┐
+│  Layer 1: Swift Menubar App (Codo.app)          │
+│                                                 │
+│  - NSStatusItem with SF Symbol icon             │
+│  - SocketServer listening on UDS                │
+│  - NotificationService → UNUserNotificationCenter│
+│  - Right-click menu (version, login item, quit) │
+│  - Runs as .app bundle only                     │
+└──────────────────────┬──────────────────────────┘
+                       │ UDS: ~/.codo/codo.sock
+┌──────────────────────┴──────────────────────────┐
+│  Layer 2: TypeScript CLI (cli/codo)             │
+│                                                 │
+│  - Bun script, no build step                    │
+│  - Accepts args or stdin JSON                   │
+│  - Connects to UDS, sends request, reads response│
+│  - Exit code reflects success/failure           │
+└─────────────────────────────────────────────────┘
 ```
 
-**Daemon is always launched via `open Codo.app` or Login Item**, never via bare `codo` in terminal. The binary itself does not start the NSApplication run loop from CLI context.
+**Why two layers?**
+- Swift side: pure daemon, no stdin/mode detection complexity
+- TS side: no compilation, easy to modify, natural for hook scripts
+- Clear IPC contract (JSON over UDS) — layers can evolve independently
 
-When macOS launches `Codo.app`, it executes the binary inside the bundle. The binary detects it's running inside a `.app` bundle (`Bundle.main.bundlePath` ends with `.app`) and enters daemon mode.
-
-**Why single binary?** Simpler installation (one file to copy), shared types between CLI and daemon, no version mismatch risk.
-
-### Mode Detection — Precise Rules
-
-```swift
-// Priority order, first match wins:
-// 1. Explicit flags
-if hasFlag("--help")    → print usage, exit(0)
-if hasFlag("--version") → print version, exit(0)
-
-// 2. Piped stdin → CLI mode
-if !isatty(STDIN_FILENO) {
-    // Read stdin with 5s timeout.
-    // Empty stdin (e.g. from /dev/null) → error "empty input", exit(1)
-    // Valid JSON → CLI mode: send to socket
-    // Invalid JSON → error "invalid json", exit(1)
-}
-
-// 3. Running inside .app bundle → daemon mode
-if Bundle.main.bundlePath.hasSuffix(".app") {
-    // Launched by macOS (open, Login Item, Finder)
-    // → start NSApplication, SocketServer, NotificationService
-}
-
-// 4. None of the above → print usage hint, exit
-print("usage: echo '{\"title\":\"...\"}' | codo")
-print("daemon: open /Applications/Codo.app")
-exit(1)
-```
-
-**Edge cases**:
-| Scenario | Behavior |
-|----------|----------|
-| `echo '{}' \| codo --help` | `--help` wins (flags checked first) |
-| `codo < /dev/null` | `isatty=false`, read stdin → empty → error exit(1) |
-| `echo '' \| codo` | `isatty=false`, read stdin → empty → error exit(1) |
-| `cat msg.json \| codo` | CLI mode |
-| `codo` in terminal | Print usage hint, exit(1) |
-| `open Codo.app` | macOS launches binary inside bundle → daemon mode |
-| Login Item auto-start | Same as `open` — bundle path detected → daemon mode |
-
-### Module Structure
+### Repository Structure
 
 ```
-Package.swift
-├── CodoCore        (.target)            — Shared types, socket protocol, message codec
-│                                          Zero AppKit/UI dependency, fully testable
-├── Codo            (.executableTarget)   — Entry point, mode router, AppKit menubar shell
-│                                          depends on CodoCore
-└── CodoTests       (.testTarget)        — Unit + integration tests
-                                           depends on CodoCore
+codo/
+├── Package.swift                    ← Swift project (daemon only)
+├── Sources/
+│   ├── CodoCore/                   ← Business logic, zero AppKit dependency
+│   │   ├── CodoMessage.swift       ← Message + Response types
+│   │   ├── SocketServer.swift      ← UDS listener
+│   │   └── NotificationService.swift ← UNUserNotificationCenter wrapper
+│   └── Codo/                       ← Thin app shell
+│       └── AppDelegate.swift       ← NSStatusItem, menu, wiring
+├── Tests/
+│   └── CodoCoreTests/              ← L1 + L3 tests
+├── cli/                            ← TypeScript CLI
+│   ├── codo.ts                     ← Main script (Bun executable)
+│   ├── codo.test.ts                ← CLI tests (bun test)
+│   └── package.json                ← Metadata only (no deps needed)
+├── Resources/
+│   └── Info.plist                  ← App bundle metadata
+├── scripts/
+│   ├── build.sh                    ← Build + assemble .app
+│   └── install.sh                  ← Install .app + symlink CLI
+└── docs/
 ```
 
-**Key principle**: `CodoCore` contains all business logic with zero UI dependency (mirroring Owl's `OwlCore` pattern). The executable target is a thin shell.
+## Layer 1: Swift Menubar App
 
-## Components
-
-### 1. MenuBar Daemon (`MenuBarController`)
-
-Responsibilities:
-- Create `NSStatusItem` with SF Symbol icon
-- Manage `NSApplication` lifecycle (`.accessory` policy — no Dock icon)
-- Own the `SocketServer` instance
-- Provide right-click context menu
-
-**Entry point pattern** (from Owl, proven stable):
+### Entry Point
 
 ```swift
 @main struct CodoApp {
     @MainActor static func main() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(.accessory)  // no Dock icon
         let delegate = AppDelegate()
         app.delegate = delegate
         app.run()
@@ -125,182 +101,185 @@ Responsibilities:
 }
 ```
 
-> **Why not SwiftUI `MenuBarExtra`?** We need precise control over NSApplication lifecycle and don't need SwiftUI views. The manual `NSApplication` approach is simpler for a notification-only app.
+Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no `MenuBarExtra`.
+
+### Components
+
+#### AppDelegate
+
+- Creates `NSStatusItem` with SF Symbol `bell` (`isTemplate = true`)
+- Owns `SocketServer` and `NotificationService`
+- Provides right-click `NSMenu`
 
 #### Right-Click Menu
 
-| Item | Default State | Notes |
-|------|---------------|-------|
-| **Codo v0.1.0** | Disabled (info label) | Shows version |
+| Item | State | Notes |
+|------|-------|-------|
+| **Codo v0.1.0** | Disabled label | Version from `CodoInfo.version` |
 | ─── | Separator | |
-| **Launch at Login** | Off (unchecked) | Toggle `SMAppService.mainApp`. Requires `.app` bundle. Grayed out + tooltip if running as bare binary |
+| **Launch at Login** | Checkbox (off) | `SMAppService.mainApp` toggle |
 | ─── | Separator | |
 | **Quit Codo** | — | `NSApplication.shared.terminate(nil)` |
 
-### 2. Socket Server (`SocketServer`)
+#### SocketServer
 
-Responsibilities:
-- Create and listen on Unix Domain Socket at `~/.codo/codo.sock`
-- Accept connections, read JSON, post notification, **send response**, close connection
-- Forward decoded `CodoMessage` to `NotificationService`
-- Handle socket cleanup on app exit (delete `.sock` file)
+- Bind to `~/.codo/codo.sock` (mode `0600`, dir mode `0700`)
+- Accept connection → read JSON + `\n` → decode → call NotificationService → encode response → send → close
+- Request/response protocol, one exchange per connection
+- See [02-ipc-protocol.md](02-ipc-protocol.md) for wire details
 
-**Socket path**: `~/.codo/codo.sock`
-- `~/.codo/` directory created on first launch if missing
-- Stale socket removed on startup via connectivity test (see [02-ipc-protocol.md](02-ipc-protocol.md))
+#### NotificationService
 
-**Protocol**: request/response, one exchange per connection. See [02-ipc-protocol.md](02-ipc-protocol.md) for wire format.
+- On daemon startup: `requestAuthorization(options: [.alert, .sound])`
+- `isAvailable` guard: `Bundle.main.bundleIdentifier != nil`
+- Bare binary: returns `ok: false, "notifications unavailable (no app bundle)"`
 
-### 3. CLI Client (`CLIClient`)
-
-Responsibilities:
-- Read JSON from stdin (with 5s timeout)
-- Validate message structure locally (fast-fail before connecting)
-- Connect to Unix Domain Socket
-- Send message, **read response**, exit with appropriate code
-
-**Exit codes**:
-| Code | Meaning |
-|------|---------|
-| 0 | `ok: true` received — daemon accepted and submitted to notification system |
-| 1 | Client-side error: invalid JSON, missing fields, empty input, or `ok: false` from daemon |
-| 2 | Daemon not running: socket file missing |
-| 3 | Communication error: connection refused, timeout, unexpected response |
-
-### 4. Notification Service (`NotificationService`)
-
-Responsibilities:
-- **Request notification permission on daemon startup** (not lazily on first use)
-- Map `CodoMessage` to `UNNotificationContent`
-- Post via `UNUserNotificationCenter`
-- Report success/failure back to caller for socket response
+> **CRITICAL GOTCHA** (from Owl): `UNUserNotificationCenter.current()` crashes when `bundleIdentifier` is nil (SPM debug builds). MUST guard before any call.
 
 #### Permission Model
 
 | Event | Action |
 |-------|--------|
-| Daemon startup (in `.app` bundle) | Call `requestAuthorization(options: [.alert, .sound])` |
-| Daemon startup (bare binary, no bundleIdentifier) | Skip — `UNUserNotificationCenter` is unavailable. Log warning to stderr |
-| CLI sends message, permission granted | Post notification, respond `ok: true` |
-| CLI sends message, permission denied by user | Respond `ok: false, error: "notification permission denied"` |
-| CLI sends message, permission not determined | Unlikely (requested at startup), but treat as denied |
-| System Focus / Do Not Disturb active | Respond `ok: true` — daemon successfully submitted to the notification system. macOS decides display policy; that's outside our control |
+| Daemon startup (`.app` bundle) | `requestAuthorization(options: [.alert, .sound])` |
+| Daemon startup (bare binary) | Skip, log warning to stderr |
+| Message received, permission granted | Post notification, respond `ok: true` |
+| Message received, permission denied | Respond `ok: false, error: "notification permission denied"` |
+| System Focus / DND active | Respond `ok: true` — submitted to system, display is macOS's decision |
 
-> **CRITICAL GOTCHA** (from Owl): `UNUserNotificationCenter.current()` crashes with `NSInternalInconsistencyException` when `Bundle.main.bundleIdentifier` is nil (SPM debug builds via `swift run`). The implementation MUST guard `bundleIdentifier != nil` before any `UNUserNotificationCenter` call, returning `ok: false` instead of crashing.
+### MenuBar Icon
 
-```swift
-enum NotificationService {
-    static var isAvailable: Bool {
-        Bundle.main.bundleIdentifier != nil
-    }
-}
+**SF Symbol `bell`**, `isTemplate = true`.
+
+- Never draw SF Symbol into canvas for template icons (Owl lesson)
+- Never use `contentTintColor` — pollutes button title text (Owl lesson)
+- MVP: static `bell` only. Badge states are future work.
+
+### App Lifecycle
+
+**Launch**:
+1. Create `~/.codo/` (mode `0700`) if missing
+2. Stale socket check: if `.sock` exists, try `connect()` — success means another instance, exit; failure means stale, `unlink()`
+3. Bind SocketServer
+4. Request notification permission
+5. Enter NSApplication run loop
+
+**Shutdown** (terminate / SIGTERM / SIGINT):
+1. Close SocketServer
+2. Remove `~/.codo/codo.sock`
+3. Exit
+
+**Launch at Login**: `SMAppService.mainApp` (macOS 13+)
+
+### Module Structure
+
+```
+Package.swift
+├── CodoCore        (.target)          ← Business logic, zero AppKit
+├── Codo            (.executableTarget) ← App shell, depends on CodoCore
+└── CodoCoreTests   (.testTarget)      ← Tests, depends on CodoCore
 ```
 
-#### Bare Binary Behavior
+## Layer 2: TypeScript CLI
 
-When running as bare binary (`swift run`, no `.app` bundle):
-- `NotificationService.isAvailable` returns `false`
-- Socket server still runs and accepts messages
-- Responses: `ok: false, error: "notifications unavailable (no app bundle)"`
-- This is **development-only**; production always runs as `.app`
-
-### 5. Message Schema (`CodoMessage`)
-
-```swift
-struct CodoMessage: Codable {
-    let title: String          // required — notification title
-    let body: String?          // optional — notification body text
-    let sound: String?         // optional — "default" | "none", defaults to "default"
-}
-```
-
-**CLI usage**:
+### Usage
 
 ```bash
-# Full message
-echo '{"title":"Build Done","body":"All 42 tests passed","sound":"default"}' | codo
+# Positional args (most common in hooks)
+codo "Build Done"                          # title only
+codo "Build Done" "All 42 tests passed"   # title + body
+codo "Build Done" "Passed" --silent        # no sound
 
-# Minimal (title only)
-echo '{"title":"Build Done"}' | codo
+# Stdin JSON (advanced)
+echo '{"title":"Build Done","body":"Passed"}' | codo
 
-# No sound
-echo '{"title":"Deploying...","body":"ETA 2min","sound":"none"}' | codo
+# Flags
+codo --help
+codo --version
 ```
 
-## MenuBar Icon
+### Implementation
 
-**SF Symbol: `bell`**
+`cli/codo.ts` — single file, Bun shebang:
 
-- `isTemplate = true` — macOS auto-adapts to light/dark menu bar
-- Return raw SF Symbol directly, never draw into custom `NSImage` canvas for template icons (Owl lesson)
-- Never use `button.contentTintColor` — it also tints `button.title` text (Owl lesson)
+```typescript
+#!/usr/bin/env bun
+```
 
-### Icon States (future, non-MVP)
+Logic:
+1. Parse args: `codo [title] [body] [--silent] [--help] [--version]`
+2. Or detect piped stdin (`!Bun.stdin.isTTY`), read JSON
+3. Construct `CodoMessage` JSON
+4. Connect to `~/.codo/codo.sock` (Bun native Unix socket)
+5. Send JSON + `\n`, read response
+6. Print errors to stderr, exit with code
 
-| State | Icon | Template |
-|-------|------|----------|
-| Idle (daemon running) | `bell` | true |
-| Recent notification | `bell.badge` | true |
+### Exit Codes
 
-Badge state auto-clears after 5 seconds. **MVP uses static `bell` only.**
+| Code | Meaning |
+|------|---------|
+| 0 | `ok: true` — notification submitted |
+| 1 | Client error: invalid args, bad JSON, or daemon returned `ok: false` |
+| 2 | Daemon not running (socket missing) |
+| 3 | Communication error (refused, timeout) |
 
-## App Lifecycle
+### Install
 
-### Launch (Daemon Mode)
+```bash
+# Symlink into PATH
+ln -sf $(pwd)/cli/codo.ts /usr/local/bin/codo
+# Or via install script
+./scripts/install.sh
+```
 
-1. Create `~/.codo/` directory if missing (mode `0700`)
-2. Check for existing instance:
-   - If `~/.codo/codo.sock` exists → attempt `connect()`
-   - If connect succeeds → another instance running → print error, exit
-   - If connect fails → stale socket → `unlink()`, proceed
-3. Bind `SocketServer` to `~/.codo/codo.sock` (mode `0600`)
-4. Launch `NSApplication` with `.accessory` policy
-5. Request notification permission (if `.app` bundle)
+Requires Bun runtime installed on the machine.
 
-### Shutdown
+## Message Schema
 
-1. `NSApplication.terminate` / SIGTERM / SIGINT
-2. Close socket server (stop accepting)
-3. Remove socket file (`~/.codo/codo.sock`)
-4. Exit
+```typescript
+// Request (CLI → Daemon)
+interface CodoMessage {
+  title: string;     // required
+  body?: string;     // optional
+  sound?: "default" | "none"; // default: "default"
+}
 
-### Launch at Login
+// Response (Daemon → CLI)
+interface CodoResponse {
+  ok: boolean;
+  error?: string;    // present when ok=false
+}
+```
 
-- `SMAppService.mainApp` (macOS 13+, from both Owl and Gecko)
-- Toggle via right-click menu
-- Requires `.app` bundle — menu item disabled when running as bare binary
+`ok: true` = daemon accepted and submitted to `UNUserNotificationCenter`. Does NOT guarantee user saw the toast (Focus/DND may suppress).
 
 ## Key Design Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Build system | SPM only | Owl pattern, `swift build` workflow, no Xcode dependency |
-| App entry | Manual `NSApplication` | More control than `MenuBarExtra`, no SwiftUI views needed |
-| Single binary | CLI + daemon in one | Simple install, shared types, no version mismatch |
-| IPC | Unix Domain Socket | Low latency, local isolation, supports structured messages |
-| IPC protocol | Request/response with JSON ack | CLI gets explicit success/failure, enables error reporting |
-| Message format | stdin JSON | Flexible for hook scripts, no argument parsing complexity |
-| Notification | UNUserNotificationCenter | Native macOS toast, respects Do Not Disturb |
-| Permission timing | Daemon startup | Avoid first-notification latency, user sees prompt immediately |
-| `ok: true` semantics | Submitted to notification system | Not "user saw it" — Focus/DND is outside our control |
-| Icon | SF Symbol `bell` | No design asset needed, auto light/dark adaptation |
-| Login item | SMAppService | macOS 13+ native, no helper app needed |
-| Instance detection | Socket connectivity test | Simpler than flock/PID file, sufficient for this project |
+| Two-layer split | Swift daemon + TS CLI | Each layer does one thing well, no mode detection |
+| IPC | Unix Domain Socket | Low latency, local isolation, Bun has native support |
+| CLI runtime | Bun | No build step, fast startup, native UDS support |
+| CLI interface | Positional args + stdin JSON | Args for hooks (simple), stdin for programmatic use |
+| Swift build | SPM only | No Xcode dependency, `swift build` workflow |
+| App entry | Manual `NSApplication` | Full control, no SwiftUI needed |
+| Notification | UNUserNotificationCenter | Native macOS toast, respects DND |
+| Permission | Request at daemon startup | Avoid first-notification latency |
+| Icon | SF Symbol `bell` | No asset needed, auto light/dark |
+| Login item | SMAppService | macOS 13+ native |
+| Instance check | Socket connectivity test | Sufficient, no flock/PID |
 
-## Constraints & Assumptions
+## Constraints
 
-- **macOS 14+** (Sonoma) — aligns with Owl's target, modern Swift concurrency
-- **No Sandbox** — Unix Domain Socket requires filesystem access outside container
-- **No App Store** — direct binary distribution
-- **Single instance** — socket connectivity test as implicit lock
-- **Apple Silicon + Intel** — universal binary via `swift build`
-- **Production = .app bundle** — bare binary is development-only, no notification support
+- **macOS 14+** (Sonoma)
+- **No Sandbox** — UDS needs filesystem access
+- **No App Store** — direct distribution
+- **Bun required** — CLI depends on Bun runtime
+- **Production = .app bundle** — bare Swift binary cannot show notifications
 
 ## Non-Goals (v1)
 
 - Custom notification actions (buttons)
 - Notification history / log viewer
-- Multiple notification categories
-- Rich media in notifications (images)
-- Network-based IPC (TCP)
+- Rich media in notifications
+- TCP/HTTP IPC
 - GUI preferences window

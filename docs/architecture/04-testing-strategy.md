@@ -1,63 +1,77 @@
 # 04 - Testing Strategy
 
-> Four-layer testing adapted for a Swift macOS menubar app. MVP scope.
+> Four-layer testing for a two-layer system (Swift daemon + TypeScript CLI).
 
 ## Four Layers
 
 | Layer | What | When | Tool |
 |-------|------|------|------|
-| **L1 — Unit Tests** | CodoCore logic: message codec, socket roundtrip, CLI client | pre-commit | `swift test` |
-| **L2 — Lint** | Code style, zero warnings | pre-commit | SwiftLint (strict mode) |
-| **L3 — Integration Tests** | Socket server ↔ CLI client end-to-end, in-process | pre-push | `swift test --filter Integration` |
-| **L4 — E2E Checklist** | Full `.app` bundle: install, launch, permission, toast | Manual (pre-release) | Human + script |
+| **L1 — Unit Tests** | Swift: message codec, socket roundtrip. TS: arg parsing, JSON construction | pre-commit | `swift test` + `bun test` |
+| **L2 — Lint** | Swift: SwiftLint strict. TS: Biome | pre-commit | `swiftlint` + `bunx biome check` |
+| **L3 — Integration** | Full socket roundtrip: TS CLI → UDS → Swift server → response | pre-push | Script: start server, run CLI, assert |
+| **L4 — E2E Checklist** | `.app` bundle: install, permission, toast display | Manual (pre-release) | Human |
 
-### Why L4 is a manual checklist, not automated
+### Why L4 is manual
 
-The highest-risk area (bundle, signing, notification permission, toast display) depends on:
-- macOS system UI (notification permission prompt)
-- Code signature identity (machine-specific)
-- `UNUserNotificationCenter` requiring a running app with bundle identifier
+Toast display depends on macOS notification permission, code signature, and bundle identity. These cannot be reliably automated. A checklist is more honest than a flaky test.
 
-These cannot be reliably automated in CI or `swift test`. A checklist is more honest than a flaky test.
+## L1 — Swift Unit Tests
 
-## L1 — Unit Tests
-
-Target: `CodoTests`, depends on `CodoCore` only.
-
-### Test Cases
+Target: `CodoCoreTests`, depends on `CodoCore` only.
 
 **MessageCodec**:
 | Test | Input | Expected |
 |------|-------|----------|
-| decode full message | `{"title":"T","body":"B","sound":"default"}` | CodoMessage(title:"T", body:"B", sound:"default") |
-| decode minimal | `{"title":"T"}` | CodoMessage(title:"T", body:nil, sound:nil) |
+| decode full message | `{"title":"T","body":"B","sound":"default"}` | CodoMessage(title, body, sound) |
+| decode minimal | `{"title":"T"}` | title only, others nil |
 | decode missing title | `{"body":"B"}` | DecodingError |
-| decode empty string | `""` | error |
+| decode empty | `""` | error |
 | decode garbage | `not json` | error |
 | encode response ok | CodoResponse(ok:true) | `{"ok":true}` |
-| encode response error | CodoResponse(ok:false, error:"msg") | `{"ok":false,"error":"msg"}` |
+| encode response error | CodoResponse(ok:false, error:"msg") | correct JSON |
 
-**CLIClient (stdin parsing)**:
-| Test | Stdin | Expected |
-|------|-------|----------|
-| valid JSON | `{"title":"T"}\n` | parsed CodoMessage |
-| empty stdin | `` | error: empty input |
-| oversized payload | 64KB+ | error: payload too large |
-| JSON without newline | `{"title":"T"}` | still parsed (newline optional in stdin) |
-
-**SocketServer + CLIClient (in-memory roundtrip)**:
+**SocketServer** (with mock handler, temp socket dir):
 | Test | Scenario | Expected |
 |------|----------|----------|
-| happy path | client sends valid msg, mock handler returns ok | client receives `ok:true` |
-| invalid json | client sends garbage | client receives `ok:false, error:"invalid json"` |
-| missing title | client sends `{"body":"B"}` | client receives `ok:false, error:"title is required"` |
-| server not running | client connects to nonexistent socket | exit code 2 |
+| happy path | valid message, handler returns ok | `ok:true` response |
+| invalid json | garbage bytes | `ok:false, "invalid json"` |
+| missing title | `{"body":"B"}` | `ok:false, "title is required"` |
+| stale socket | create stale file, start server | binds successfully |
+| concurrent clients | 3 simultaneous | all get correct response |
 
-> Socket tests use a temp directory (`FileManager.default.temporaryDirectory`) for the `.sock` file, not `~/.codo/`. This avoids interfering with a running daemon.
+**NotificationService** (protocol mock):
+| Test | Scenario | Expected |
+|------|----------|----------|
+| available + granted | mock returns success | ok:true |
+| unavailable (no bundle) | `isAvailable=false` | ok:false, unavailable |
+| permission denied | mock returns denied | ok:false, denied |
+
+> Socket tests use temp directory for `.sock` file, never `~/.codo/`.
+
+## L1 — TypeScript Unit Tests
+
+File: `cli/codo.test.ts`, run with `bun test`.
+
+**Arg parsing**:
+| Test | Args | Expected |
+|------|------|----------|
+| title only | `["Build Done"]` | `{title:"Build Done"}` |
+| title + body | `["Build Done", "Passed"]` | `{title:..., body:...}` |
+| with --silent | `["Done", "--silent"]` | `{..., sound:"none"}` |
+| no args | `[]` | error/usage |
+| --help | `["--help"]` | print help |
+| --version | `["--version"]` | print version |
+
+**JSON construction**:
+| Test | Input | Expected |
+|------|-------|----------|
+| minimal | `{title:"T"}` | valid JSON with title |
+| full | `{title:"T",body:"B",sound:"default"}` | all fields |
+| stdin JSON | piped `{"title":"T"}` | parsed correctly |
 
 ## L2 — Lint
 
-SwiftLint in strict mode. Configuration:
+### Swift
 
 ```yaml
 # .swiftlint.yml
@@ -66,70 +80,65 @@ opt_in_rules:
   - empty_count
   - closure_spacing
   - force_unwrapping
-disabled_rules: []
 excluded:
   - .build
 ```
 
-Zero warnings, zero exceptions. Enforced in pre-commit hook.
+### TypeScript
+
+```json
+// cli/biome.json
+{ "linter": { "rules": { "recommended": true } } }
+```
 
 ## L3 — Integration Tests
 
-Separate test target or filtered by naming convention (`*IntegrationTests`).
+Script-based: spin up a real `SocketServer` on a temp socket, call from TS CLI, assert response.
 
-**Socket lifecycle**:
 | Test | Scenario | Expected |
 |------|----------|----------|
-| stale socket cleanup | Create stale `.sock` file, start server | Server binds successfully |
-| concurrent clients | 3 clients send simultaneously | All 3 receive correct responses |
-| client timeout | Server delays response > 5s | Client reports timeout, exit code 3 |
+| CLI → server happy path | `codo.ts` sends to temp socket, mock notification handler | exit 0, stdout ok |
+| server not running | CLI tries to connect, no server | exit 2, stderr "not running" |
+| client timeout | server delays > 5s | exit 3, stderr timeout |
 
-> Integration tests start a real `SocketServer` on a temp socket and exercise the full CodoCore stack. They do NOT test `UNUserNotificationCenter` (that's L4).
+## L4 — E2E Checklist
 
-## L4 — E2E Checklist (Manual)
-
-Run before each release. Requires a real Mac with the `.app` installed.
-
-```
+```markdown
 ## Pre-release E2E Checklist
 
 ### Build
-- [ ] `./scripts/build.sh` succeeds without errors
-- [ ] `.build/Codo.app` exists with correct bundle structure
+- [ ] `./scripts/build.sh` succeeds
 - [ ] `codesign -v .build/Codo.app` passes
-- [ ] `CFBundleIdentifier` in Info.plist matches "dev.nocoo.codo"
 
 ### Install
-- [ ] `cp -r .build/Codo.app /Applications/Codo.app` succeeds
-- [ ] `ln -sf /Applications/Codo.app/Contents/MacOS/Codo /usr/local/bin/codo`
-- [ ] `codo --version` prints correct version
+- [ ] `cp -r .build/Codo.app /Applications/Codo.app`
+- [ ] `ln -sf $(pwd)/cli/codo.ts /usr/local/bin/codo`
+- [ ] `codo --version` prints version
 
 ### Daemon
-- [ ] `open /Applications/Codo.app` — bell icon appears in menubar
-- [ ] No Dock icon visible
-- [ ] Right-click menu shows: version label, Launch at Login, Quit
-- [ ] `~/.codo/codo.sock` exists with mode 0600
-- [ ] `~/.codo/` directory has mode 0700
+- [ ] `open /Applications/Codo.app` → bell icon in menubar
+- [ ] No Dock icon
+- [ ] Right-click: version, Launch at Login, Quit
+- [ ] `~/.codo/codo.sock` exists (mode 0600)
 
-### Notification Permission
-- [ ] First launch: macOS shows notification permission prompt
-- [ ] After granting: System Settings > Notifications > Codo shows "Allow"
+### Permission
+- [ ] First launch: permission prompt appears
+- [ ] System Settings > Notifications > Codo shows Allow
 
 ### Toast
-- [ ] `echo '{"title":"Hello"}' | codo` → toast appears, exit code 0
-- [ ] `echo '{"title":"T","body":"B","sound":"default"}' | codo` → toast with sound
-- [ ] `echo '{"title":"T","sound":"none"}' | codo` → toast without sound
+- [ ] `codo "Hello"` → toast, exit 0
+- [ ] `codo "Title" "Body"` → toast with body
+- [ ] `codo "Silent" --silent` → toast without sound
 
-### Error Handling
-- [ ] `echo '{"bad json' | codo` → stderr error, exit code 1
-- [ ] `echo '{"body":"no title"}' | codo` → stderr error, exit code 1
-- [ ] Quit daemon → `echo '{"title":"T"}' | codo` → "daemon not running", exit code 2
+### Errors
+- [ ] `echo '{"bad' | codo` → exit 1
+- [ ] Quit daemon → `codo "Test"` → "not running", exit 2
 
 ### Lifecycle
-- [ ] Quit via menu → socket file cleaned up
-- [ ] Start second instance → error message, exits
-- [ ] Kill -9 existing → restart succeeds (stale socket cleaned)
-- [ ] Launch at Login toggle → verify in System Settings > Login Items
+- [ ] Quit → socket file removed
+- [ ] Second instance → error, exits
+- [ ] kill -9 → restart cleans stale socket
+- [ ] Launch at Login toggle works
 ```
 
 ## Git Hooks
@@ -142,9 +151,11 @@ set -euo pipefail
 
 # L2: Lint
 swiftlint lint --strict --quiet
+cd cli && bunx biome check . && cd ..
 
 # L1: Unit tests
-swift test --filter "^(?!.*Integration).*$" 2>&1
+swift test
+cd cli && bun test && cd ..
 ```
 
 ### pre-push
@@ -153,21 +164,17 @@ swift test --filter "^(?!.*Integration).*$" 2>&1
 #!/bin/bash
 set -euo pipefail
 
-# L1 + L2 (redundant but safe)
+# L1 + L2
 swiftlint lint --strict --quiet
-swift test 2>&1
-```
+swift test
+cd cli && bunx biome check . && bun test && cd ..
 
-Pre-push runs ALL tests including integration tests.
+# L3: Integration
+./scripts/integration-test.sh
+```
 
 ## Coverage
 
-Target: **90%+ on CodoCore**. The executable target (`Codo`) is a thin shell and is not expected to have automated test coverage — it's verified by L4.
+Target: **90%+ on CodoCore**, measured via `swift test --enable-code-coverage`.
 
-Measure with:
-```bash
-swift test --enable-code-coverage
-xcrun llvm-cov report .build/debug/CodoPackageTests.xctest/Contents/MacOS/CodoPackageTests \
-  --instr-profile .build/debug/codecov/default.profdata \
-  --sources Sources/CodoCore/
-```
+TS CLI: `bun test --coverage`, target 90%+.
