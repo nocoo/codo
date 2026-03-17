@@ -1,24 +1,29 @@
 # 03 - Build and Install
 
-> Build pipeline, app bundle assembly, and installation procedure.
+> Build pipeline, app bundle assembly, installation, and verification procedure.
 
-## Build Targets
+## Build Modes
 
-| Mode | Build | Output | Use Case |
-|------|-------|--------|----------|
-| Debug | `swift build` | `.build/debug/Codo` | Development, bare binary |
-| Release | `swift build -c release` | `.build/release/Codo` | Optimized bare binary |
-| App Bundle | `./scripts/build.sh` | `.build/Codo.app` | Full app with notifications + login item |
+| Mode | Command | Output | Use For |
+|------|---------|--------|---------|
+| Debug | `swift build` | `.build/debug/Codo` | Unit tests, socket/codec development |
+| Release | `swift build -c release` | `.build/release/Codo` | Performance testing (still bare binary) |
+| **App Bundle** | `./scripts/build.sh` | `.build/Codo.app` | **Production — the only supported install target** |
 
-### Why App Bundle?
+### Bare Binary vs App Bundle
 
-Bare SPM binary lacks:
-- `Bundle.main.bundleIdentifier` → **`UNUserNotificationCenter` crashes** (Owl lesson)
-- `Info.plist` with `LSUIElement` → cannot hide Dock icon properly
-- Stable code signature → **TCC permissions lost on rebuild** (Gecko lesson)
-- `SMAppService` support → cannot register login item
+| Capability | Bare Binary | App Bundle |
+|------------|-------------|------------|
+| Unit tests (L1) | ✅ | N/A |
+| SwiftLint (L2) | ✅ | N/A |
+| Socket IPC | ✅ | ✅ |
+| CLI mode | ✅ | ✅ |
+| `UNUserNotificationCenter` | ❌ crash (no bundleIdentifier) | ✅ |
+| `LSUIElement` (hide Dock icon) | ❌ | ✅ |
+| `SMAppService` (login item) | ❌ | ✅ |
+| Stable code signature | ❌ | ✅ |
 
-**App bundle is required for production use.** Bare binary works for socket/CLI development only.
+**Bare binary is for development and testing only.** It cannot display notifications. Production use requires the `.app` bundle.
 
 ## App Bundle Structure
 
@@ -78,42 +83,45 @@ Procedure (mirroring Owl's proven pipeline):
 6. codesign --force --options runtime --sign "Apple Development" .build/Codo.app
 ```
 
-## Installation (Manual, v1)
+## Installation
 
-### App (daemon mode)
+**Only one install method** — `.app` bundle + PATH symlink:
 
 ```bash
-# Build
+# 1. Build app bundle
 ./scripts/build.sh
 
-# Install
+# 2. Install app
 cp -r .build/Codo.app /Applications/Codo.app
-```
 
-### CLI (client mode)
-
-```bash
-# Symlink into PATH — points to the same binary inside the app bundle
+# 3. Create CLI symlink (same binary, accessible from PATH)
 ln -sf /Applications/Codo.app/Contents/MacOS/Codo /usr/local/bin/codo
 ```
 
-This ensures the CLI binary has access to the app's bundle identifier when running in daemon mode, while also being callable as `codo` from any terminal.
-
-### Verify
+### Verify (order matters)
 
 ```bash
-# CLI mode
-echo '{"title":"Hello"}' | codo
-
-# Daemon mode (launches menubar app)
+# Step 1: Start daemon FIRST
 open /Applications/Codo.app
+# → Confirm: bell icon appears in menubar
+# → Confirm: macOS prompts for notification permission (first launch)
+# → Grant permission
+
+# Step 2: Send test notification via CLI
+echo '{"title":"Hello Codo","body":"Installation verified"}' | codo
+# → Confirm: macOS toast notification appears
+# → Confirm: CLI exits with code 0
+
+# Step 3: Verify error handling
+echo '{"bad json' | codo
+# → Confirm: stderr shows error, exit code 1
 ```
 
 ## Code Signing
 
 | Setting | Value | Reason |
 |---------|-------|--------|
-| Identity | `Apple Development` | Stable across rebuilds (Gecko lesson: ad-hoc loses TCC) |
+| Identity | `Apple Development` | Stable across rebuilds (Gecko lesson: ad-hoc `"-"` loses TCC permissions) |
 | Options | `--options runtime` | Required for notarization (future) |
 | Sandbox | **No** | Unix Domain Socket needs filesystem access |
 
@@ -128,18 +136,3 @@ public enum CodoInfo {
 ```
 
 `Info.plist` `CFBundleShortVersionString` must match. `build.sh` can optionally sync this.
-
-## Atomic Commits Plan
-
-| # | Commit | Content |
-|---|--------|---------|
-| 1 | `chore: init spm project` | Package.swift, .gitignore, empty targets |
-| 2 | `feat: add message types and codec` | CodoCore — CodoMessage, CodoResponse, JSON coding |
-| 3 | `feat: add socket server` | CodoCore — SocketServer actor, bind/accept/read/respond |
-| 4 | `feat: add cli client` | CodoCore — CLIClient, stdin read, socket connect/send |
-| 5 | `feat: add notification service` | CodoCore — NotificationService, bundleIdentifier guard |
-| 6 | `feat: add menubar daemon` | Codo — AppDelegate, NSStatusItem, SF Symbol icon |
-| 7 | `feat: add mode router` | Codo — main.swift, stdin/flag detection, dispatch |
-| 8 | `feat: add app bundle pipeline` | Resources/Info.plist, scripts/build.sh |
-| 9 | `test: add core unit tests` | CodoTests — message codec, socket roundtrip, CLI client |
-| 10 | `docs: add project documentation` | README.md, docs/ |
