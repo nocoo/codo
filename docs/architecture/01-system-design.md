@@ -31,32 +31,22 @@ macOS UNUserNotificationCenter → system toast
 
 ## Architecture
 
-### Single Binary, Dual Mode
+### Single Binary, Two Modes
 
-One SPM executable target, mode determined by stdin/arguments:
+One SPM executable target. Two modes only:
 
 ```
-echo '{}' | codo  ← stdin detected    → CLI mode: send to socket, exit
-codo --help       ← flag              → print usage, exit
-codo --version    ← flag              → print version, exit
-codo              ← no stdin, no args → (see "Daemon Entry" below)
+echo '{}' | codo  ← piped stdin → CLI mode: send to socket, exit
+codo --help       ← flag        → print usage, exit
+codo --version    ← flag        → print version, exit
+codo              ← anything else → print "use: open /Applications/Codo.app", exit(1)
 ```
+
+**Daemon is always launched via `open Codo.app` or Login Item**, never via bare `codo` in terminal. The binary itself does not start the NSApplication run loop from CLI context.
+
+When macOS launches `Codo.app`, it executes the binary inside the bundle. The binary detects it's running inside a `.app` bundle (`Bundle.main.bundlePath` ends with `.app`) and enters daemon mode.
 
 **Why single binary?** Simpler installation (one file to copy), shared types between CLI and daemon, no version mismatch risk.
-
-### Daemon Entry — PENDING DECISION
-
-> **Status: 待定，不阻塞 MVP。**
->
-> 运行裸 `codo` 时直接进入 NSApplication run loop，终端会被前台阻塞，交互体验不佳。
-> 日常使用应通过 `open /Applications/Codo.app` 或 Login Item 启动。
->
-> 可选方案（后续定稿）：
-> 1. 裸 `codo` 直接报错，强制要求通过 `.app` 启动
-> 2. 裸 `codo` 检测到 tty 时打印提示后 fork 到后台
-> 3. 保持现状，接受终端阻塞行为
->
-> **MVP 阶段**：daemon 仅通过 `open Codo.app` 启动。CLI 模式通过 `echo '...' | codo` 调用。`codo` 裸调用的行为暂不定义。
 
 ### Mode Detection — Precise Rules
 
@@ -66,16 +56,24 @@ codo              ← no stdin, no args → (see "Daemon Entry" below)
 if hasFlag("--help")    → print usage, exit(0)
 if hasFlag("--version") → print version, exit(0)
 
-// 2. Stdin detection (non-interactive pipe)
+// 2. Piped stdin → CLI mode
 if !isatty(STDIN_FILENO) {
-    // Piped input detected. Read stdin with 5s timeout.
+    // Read stdin with 5s timeout.
     // Empty stdin (e.g. from /dev/null) → error "empty input", exit(1)
     // Valid JSON → CLI mode: send to socket
     // Invalid JSON → error "invalid json", exit(1)
 }
 
-// 3. Interactive terminal, no flags
-// → daemon mode (launch NSApplication)
+// 3. Running inside .app bundle → daemon mode
+if Bundle.main.bundlePath.hasSuffix(".app") {
+    // Launched by macOS (open, Login Item, Finder)
+    // → start NSApplication, SocketServer, NotificationService
+}
+
+// 4. None of the above → print usage hint, exit
+print("usage: echo '{\"title\":\"...\"}' | codo")
+print("daemon: open /Applications/Codo.app")
+exit(1)
 ```
 
 **Edge cases**:
@@ -85,8 +83,9 @@ if !isatty(STDIN_FILENO) {
 | `codo < /dev/null` | `isatty=false`, read stdin → empty → error exit(1) |
 | `echo '' \| codo` | `isatty=false`, read stdin → empty → error exit(1) |
 | `cat msg.json \| codo` | CLI mode |
-| `codo` in terminal | Daemon mode |
-| `codo` in launch agent | Daemon mode (stdin is not a tty) — **needs special handling, see PENDING DECISION** |
+| `codo` in terminal | Print usage hint, exit(1) |
+| `open Codo.app` | macOS launches binary inside bundle → daemon mode |
+| Login Item auto-start | Same as `open` — bundle path detected → daemon mode |
 
 ### Module Structure
 
@@ -187,7 +186,7 @@ Responsibilities:
 | CLI sends message, permission not determined | Unlikely (requested at startup), but treat as denied |
 | System Focus / Do Not Disturb active | Respond `ok: true` — daemon successfully submitted to the notification system. macOS decides display policy; that's outside our control |
 
-> **CRITICAL GOTCHA** (from Owl): `UNUserNotificationCenter.current()` crashes with `NSInternalInconsistencyException` when `Bundle.main.bundleIdentifier` is nil. This happens in SPM debug builds (`swift run`). **All UNUserNotificationCenter calls MUST guard `bundleIdentifier != nil`**.
+> **CRITICAL GOTCHA** (from Owl): `UNUserNotificationCenter.current()` crashes with `NSInternalInconsistencyException` when `Bundle.main.bundleIdentifier` is nil (SPM debug builds via `swift run`). The implementation MUST guard `bundleIdentifier != nil` before any `UNUserNotificationCenter` call, returning `ok: false` instead of crashing.
 
 ```swift
 enum NotificationService {

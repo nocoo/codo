@@ -14,11 +14,10 @@
 
 | Capability | Bare Binary | App Bundle |
 |------------|-------------|------------|
-| Unit tests (L1) | ✅ | N/A |
-| SwiftLint (L2) | ✅ | N/A |
+| Unit tests | ✅ `swift test` | N/A |
 | Socket IPC | ✅ | ✅ |
 | CLI mode | ✅ | ✅ |
-| `UNUserNotificationCenter` | ❌ crash (no bundleIdentifier) | ✅ |
+| `UNUserNotificationCenter` | ❌ guarded skip (no bundleIdentifier, would crash without guard) | ✅ |
 | `LSUIElement` (hide Dock icon) | ❌ | ✅ |
 | `SMAppService` (login item) | ❌ | ✅ |
 | Stable code signature | ❌ | ✅ |
