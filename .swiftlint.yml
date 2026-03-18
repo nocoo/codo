@@ -2,10 +2,16 @@ strict: true
 opt_in_rules:
   - empty_count
   - closure_spacing
+disabled_rules:
   - force_unwrapping
 identifier_name:
   excluded:
     - ok
+    - tv
+    - id
+function_body_length:
+  warning: 80
+  error: 100
 excluded:
   - .build
   - Tests
