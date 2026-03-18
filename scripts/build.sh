@@ -28,9 +28,15 @@ cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 # Copy Info.plist
 cp "$PROJECT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/"
 
-# Ad-hoc sign
-echo "=== Signing ==="
-codesign --force --sign - "$APP_BUNDLE"
+# Sign with Apple Development (stable TCC identity across rebuilds)
+SIGN_IDENTITY="Apple Development"
+TEAM_ID="93WWLTN9XU"
+
+echo "=== Signing ($SIGN_IDENTITY, team $TEAM_ID) ==="
+codesign --force --sign "$SIGN_IDENTITY" \
+  --team-id "$TEAM_ID" \
+  --options runtime \
+  "$APP_BUNDLE"
 
 echo "=== Verifying ==="
 codesign -v "$APP_BUNDLE"
