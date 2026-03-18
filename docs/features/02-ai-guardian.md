@@ -226,7 +226,282 @@ Daemon launch
 
 **Always warm** — avoids cold-start latency on first message. The Guardian process is lightweight (Bun runtime + idle event loop) when no messages are being processed.
 
-## Scope
+## Data Sources: Claude Code Hooks
+
+The primary data source for the Guardian is **Claude Code hooks** — lifecycle events that trigger CLI calls with rich JSON context. Understanding what data is available at each hook point is critical for the Guardian's context-building strategy.
+
+### Hook Integration Architecture
+
+```
+Claude Code
+    │
+    ├── Notification hook ──► codo CLI (stdin JSON) ──► daemon ──► Guardian
+    ├── Stop hook ──────────► codo CLI (stdin JSON) ──► daemon ──► Guardian
+    ├── PostToolUse hook ───► codo CLI (stdin JSON) ──► daemon ──► Guardian
+    └── SessionStart hook ──► codo CLI (stdin JSON) ──► daemon ──► Guardian
+```
+
+Each hook receives a **JSON payload on stdin** containing event-specific data plus common fields available on every event.
+
+### Common Fields (All Events)
+
+Every hook invocation includes:
+
+| Field | Type | Description | Guardian Value |
+|-------|------|-------------|----------------|
+| `session_id` | `string` | Unique session identifier | **High** — correlate messages from the same session |
+| `transcript_path` | `string` | Absolute path to conversation JSON file | **Critical** — full conversation context on demand |
+| `cwd` | `string` | Current working directory | **Medium** — identifies which project |
+| `hook_event_name` | `string` | Event type that triggered this hook | **High** — determines message semantics |
+
+**`transcript_path` is the most powerful field** — it points to the complete conversation history on disk. The Guardian can read this file to understand the full context of what Claude is doing, without needing to reconstruct it from individual hook events. However, this file can be very large, so the Guardian should read it selectively (e.g., last N turns) rather than loading it entirely.
+
+### Hook Events for Guardian
+
+We use 4 primary hook events, each providing different contextual information:
+
+#### 1. `Notification` — Primary notification trigger
+
+The most direct hook. Fires when Claude Code itself wants to notify the user.
+
+```json
+{
+  "session_id": "abc123",
+  "transcript_path": "/path/to/conversation.json",
+  "cwd": "/Users/you/project",
+  "hook_event_name": "Notification",
+  "message": "Claude needs your permission to use Bash",
+  "title": "Permission needed",
+  "notification_type": "permission_prompt"
+}
+```
+
+| notification_type | Meaning | Guardian Strategy |
+|-------------------|---------|-------------------|
+| `permission_prompt` | Claude needs user to approve a tool use | High priority — user action needed |
+| `idle_prompt` | Claude is waiting for user input | Medium — may suppress if recent |
+| `auth_success` | Authentication completed | Low — usually transient |
+| `elicitation_dialog` | MCP server requesting user input | High — user action needed |
+
+**Data richness: Low.** Only `message`, `title`, and `notification_type`. The Guardian must rely on its maintained context (from other hook events) to understand what this notification is about.
+
+#### 2. `Stop` — Task completion signal
+
+Fires when Claude finishes a response. Contains the **last assistant message** — the richest single piece of context.
+
+```json
+{
+  "session_id": "abc123",
+  "transcript_path": "/path/to/conversation.json",
+  "cwd": "/Users/you/project",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "I've completed the refactoring of the authentication module. All 42 tests pass. Here's a summary of changes:\n- Extracted AuthService from AuthController\n- Added token refresh logic\n- Updated 3 test files"
+}
+```
+
+**Data richness: High.** `last_assistant_message` is a natural-language summary of what Claude just did. This is the **best source for generating meaningful notifications** — the Guardian can extract the key outcome and rewrite it as a concise toast.
+
+#### 3. `PostToolUse` — Operation result tracking
+
+Fires after each successful tool call. Provides the tool name, input, and response.
+
+```json
+{
+  "session_id": "abc123",
+  "transcript_path": "/path/to/conversation.json",
+  "cwd": "/Users/you/project",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": { "command": "npm test", "timeout": 30000 },
+  "tool_use_id": "toolu_abc123",
+  "tool_response": "Test Suites: 12 passed, 12 total\nTests: 42 passed, 42 total"
+}
+```
+
+Common tool names and what they tell the Guardian:
+
+| tool_name | What it reveals | Example notification |
+|-----------|-----------------|---------------------|
+| `Bash` (test commands) | Test results | "✅ 42 tests passed" |
+| `Bash` (build commands) | Build status | "❌ Build failed — 3 errors" |
+| `Bash` (git commands) | Git operations | "Committed: fix auth token refresh" |
+| `Edit` / `Write` | Files being modified | (usually suppress — too granular) |
+| `Agent` | Sub-agent spawned | (suppress — internal detail) |
+
+**Data richness: Very High** but **very verbose**. The Guardian should selectively process PostToolUse events — test results, build outputs, and git operations are valuable; individual file edits are noise.
+
+**Performance concern**: PostToolUse fires for *every* tool call, which can be dozens per task. The Guardian must filter aggressively or batch these events rather than calling the LLM for each one.
+
+#### 4. `PostToolUseFailure` — Error tracking
+
+Fires when a tool call fails. Provides error information.
+
+```json
+{
+  "session_id": "abc123",
+  "transcript_path": "/path/to/conversation.json",
+  "cwd": "/Users/you/project",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": { "command": "npm test" },
+  "tool_use_id": "toolu_abc123",
+  "error": "Command failed with exit code 1:\n\nFAIL src/auth.test.ts\n  ● AuthService > should refresh token",
+  "is_interrupt": false
+}
+```
+
+**Data richness: High.** Failures are almost always worth notifying about. `is_interrupt` distinguishes user-initiated cancellation from real errors.
+
+#### 5. `SessionStart` / `SessionEnd` — Session lifecycle
+
+```json
+// SessionStart
+{
+  "session_id": "abc123",
+  "transcript_path": "/path/to/conversation.json",
+  "cwd": "/Users/you/project",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "model": "claude-sonnet-4-6"
+}
+
+// SessionEnd
+{
+  "session_id": "abc123",
+  "hook_event_name": "SessionEnd",
+  "reason": "prompt_input_exit"
+}
+```
+
+**Guardian use**: SessionStart lets the Guardian know a new context is beginning (reset or correlate). SessionEnd signals cleanup. These are low-frequency, low-cost events.
+
+### Recommended Hook Configuration
+
+The following Claude Code hook configuration routes events to Codo:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "cat | codo --hook stop"
+        }]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "cat | codo --hook notification"
+        }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "cat | codo --hook post-tool-use",
+          "async": true
+        }]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "cat | codo --hook post-tool-use-failure",
+          "async": true
+        }]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "cat | codo --hook session-start",
+          "async": true
+        }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "cat | codo --hook session-end",
+          "async": true
+        }]
+      }
+    ]
+  }
+}
+```
+
+**Design notes**:
+- `cat |` pipes the JSON stdin to `codo`
+- `--hook <type>` is a **new CLI flag** that tells codo to forward the full hook JSON to the Guardian instead of treating it as a simple notification
+- `async: true` on PostToolUse/Failure and session events — these are observational, shouldn't block Claude Code
+- `Stop` and `Notification` are **synchronous** — we want to ensure the notification fires before the user context-switches
+- `PostToolUse` matcher is `"Bash"` only — Edit/Write/Read events are too noisy for notification purposes
+
+### CLI Extension: `--hook` Flag
+
+The existing `codo` CLI needs a new `--hook <event-type>` flag that:
+
+1. Reads the full Claude Code hook JSON from stdin
+2. Forwards it as-is to the daemon (which passes it to the Guardian)
+3. The Guardian receives the raw hook data with all fields intact
+
+This is different from the existing stdin JSON mode:
+- **Existing**: `echo '{"title":"..."}' | codo` — user constructs a CodoMessage
+- **New**: `cat | codo --hook stop` — raw Claude Code hook payload forwarded to Guardian
+
+The wire format between CLI → daemon is extended:
+
+```json
+// Existing CodoMessage (direct notification)
+{"title": "Build Done", "body": "42 tests passed"}
+
+// New hook message (for Guardian processing)
+{"_hook": "stop", "session_id": "abc123", "transcript_path": "...", "last_assistant_message": "..."}
+```
+
+The `_hook` field distinguishes hook payloads from direct notification messages. When the daemon receives a `_hook` message:
+- Guardian ON → forward to Guardian for AI processing
+- Guardian OFF → extract best-effort title/body and deliver as raw notification
+
+### Data Flow Summary
+
+| Hook Event | Frequency | Richness | Latency Sensitivity | Guardian Strategy |
+|------------|-----------|----------|---------------------|-------------------|
+| `Stop` | Low (1 per task) | **Very High** — full summary | Medium (sync) | Always process — generate notification from assistant message |
+| `Notification` | Low | Low — title + type only | Medium (sync) | Enrich with maintained context, forward |
+| `PostToolUse` | **Very High** (per tool call) | High — full tool I/O | Low (async) | **Batch + filter** — only process Bash results, accumulate for context |
+| `PostToolUseFailure` | Low | High — error details | Low (async) | Always process — errors are important |
+| `SessionStart` | Very Low | Low | None (async) | Context reset / correlation |
+| `SessionEnd` | Very Low | Minimal | None (async) | Cleanup |
+
+### Performance Strategy
+
+PostToolUse is the hot path — potentially dozens of events per task. The Guardian must handle this efficiently:
+
+1. **Filter at hook level**: Only Bash tool calls are hooked (matcher: `"Bash"`). Edit/Write/Read are excluded.
+2. **Filter at Guardian level**: Within Bash results, only test/build/git outputs trigger LLM analysis. Short commands (ls, cat, etc.) are accumulated as context but don't trigger LLM calls.
+3. **Batch processing**: The Guardian accumulates PostToolUse events and only calls the LLM when a significant event occurs (Stop, Notification, or a matching PostToolUse pattern).
+4. **Context vs. trigger**: Most PostToolUse events are added to the Guardian's context window (cheap, no LLM call) but only a few trigger actual notification generation (expensive, LLM call).
+
+```
+PostToolUse events:
+    ├── "npm test" result     → trigger LLM (test result = important)
+    ├── "swift build" output  → trigger LLM (build result = important)
+    ├── "git commit" output   → trigger LLM (git operation = important)
+    ├── "ls -la" output       → context only (no LLM call)
+    ├── "cat file.ts" output  → context only (no LLM call)
+    └── "echo hello" output   → discard (noise)
+```
 
 ### In Scope (Phase 2)
 
@@ -235,15 +510,19 @@ Daemon launch
 - Context maintenance across messages with auto-compression
 - Notification rewriting (title, body, subtitle inference)
 - Deduplication and suppression of redundant notifications
-- Notification update (replace previous notification for same thread)
+- CLI `--hook` flag for forwarding raw Claude Code hook payloads
+- Hook-aware wire format (`_hook` field) for daemon ↔ Guardian
+- PostToolUse batching and filtering strategy
 - Settings UI (API key, base URL, model, guardian toggle)
 - Keychain storage for API key
 - Daemon ↔ Guardian JSON-RPC protocol
 - Process lifecycle management (spawn, restart, shutdown)
 - Graceful fallback to raw delivery on any AI failure
+- Example Claude Code hook configuration in docs
 
 ### Out of Scope (Future)
 
+- Notification replacement (update existing notification by stable ID)
 - Custom user rules / prompt customization
 - Multiple LLM provider profiles
 - Notification action buttons (approve/reject from notification)
