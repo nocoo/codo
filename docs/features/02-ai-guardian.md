@@ -138,7 +138,7 @@ The Guardian is not a chatbot — it's a **state machine** that maintains struct
 
 The Guardian identifies projects by **`cwd`** (working directory) from hook events. This is the most reliable project key — different Claude Code sessions in the same directory are part of the same project.
 
-**Path canonicalization**: The Guardian applies `realpath()` to `cwd` before using it as a project key. This ensures that symlinks, `../` relative components, and worktree paths all resolve to the same canonical project identity. Without this, the same repository accessed via `/Users/you/project`, `/Users/you/symlink-to-project`, or `/Users/you/project/src/..` would be treated as separate projects.
+**Path canonicalization**: The Guardian applies `realpath()` to `cwd` before using it as a project key. This resolves symlinks and `../` relative components so that `/Users/you/project`, `/Users/you/symlink-to-project`, and `/Users/you/project/src/..` all map to the same project. Note: git worktrees are intentionally treated as **separate projects** — they have different physical paths and typically represent independent work streams (e.g., a feature branch vs. main). If repo-level grouping is needed in the future, it would require `git rev-parse --show-toplevel` or similar, which is out of scope for v1.
 
 | Hook Field | Maps To | Purpose |
 |------------|---------|---------|
@@ -606,17 +606,25 @@ PostToolUse is the hot path — potentially dozens of events per task. The Guard
 
 1. **Filter at hook level**: Only Bash tool calls are hooked (matcher: `"Bash"`). Edit/Write/Read are excluded.
 2. **Filter at Guardian level**: Within Bash results, only test/build/git outputs trigger LLM analysis. Short commands (ls, cat, etc.) are accumulated as context but don't trigger LLM calls.
-3. **Batch processing**: The Guardian accumulates PostToolUse events and only calls the LLM when a significant event occurs (Stop, Notification, or a matching PostToolUse pattern). **Important**: batching only affects whether the LLM is invoked — all events are always written into the state (Layer 1 status update + Layer 2 event buffer) regardless of whether they trigger an LLM call.
+3. **Batch processing**: The Guardian accumulates PostToolUse events and only calls the LLM when a significant event occurs (Stop, Notification, or a matching PostToolUse pattern).
 4. **Context vs. trigger**: Most PostToolUse events are added to the Guardian's context window (cheap, no LLM call) but only a few trigger actual notification generation (expensive, LLM call).
+
+**Three-tier event classification** — determines how each PostToolUse event is handled:
+
+| Tier | State Write | LLM Trigger | Examples |
+|------|------------|-------------|----------|
+| **Important** | Layer 1 (last_status) + Layer 2 | Yes — may generate notification | `npm test`, `swift build`, `git commit`, `git push` |
+| **Contextual** | Layer 2 only | No | `ls -la`, `cat file.ts`, `cd dir`, `grep pattern` |
+| **Noise** | None — discarded | No | `echo hello`, `pwd`, trivially short outputs (<10 chars) |
 
 ```
 PostToolUse events:
-    ├── "npm test" result     → trigger LLM (test result = important)
-    ├── "swift build" output  → trigger LLM (build result = important)
-    ├── "git commit" output   → trigger LLM (git operation = important)
-    ├── "ls -la" output       → context only (no LLM call)
-    ├── "cat file.ts" output  → context only (no LLM call)
-    └── "echo hello" output   → discard (noise)
+    ├── "npm test" result     → important (Layer 1+2, trigger LLM)
+    ├── "swift build" output  → important (Layer 1+2, trigger LLM)
+    ├── "git commit" output   → important (Layer 1+2, trigger LLM)
+    ├── "ls -la" output       → contextual (Layer 2 only, no LLM)
+    ├── "cat file.ts" output  → contextual (Layer 2 only, no LLM)
+    └── "echo hello" output   → noise (discard)
 ```
 
 ### In Scope (Phase 2)
