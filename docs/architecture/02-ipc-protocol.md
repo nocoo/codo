@@ -75,7 +75,7 @@ Does NOT guarantee user saw the toast. macOS may suppress (Focus, DND, settings)
 | `"invalid json"` | Cannot parse request |
 | `"title is required"` | Missing or empty `title` |
 | `"notification permission denied"` | User denied in System Settings |
-| `"notifications unavailable (no app bundle)"` | Daemon running as bare binary (dev only) |
+| `"notifications unavailable (no app bundle)"` | Dev-only safety net: bare binary without `.app` bundle. Not a production path |
 | `"notification failed: <detail>"` | System error from `UNUserNotificationCenter.add()` |
 
 ## Encoding
@@ -104,7 +104,7 @@ Does NOT guarantee user saw the toast. macOS may suppress (Focus, DND, settings)
 | Invalid JSON | `{"ok":false,"error":"invalid json"}` |
 | Missing `title` | `{"ok":false,"error":"title is required"}` |
 | Permission denied | `{"ok":false,"error":"notification permission denied"}` |
-| No app bundle | `{"ok":false,"error":"notifications unavailable (no app bundle)"}` |
+| No app bundle (dev only) | `{"ok":false,"error":"notifications unavailable (no app bundle)"}` |
 | System error | `{"ok":false,"error":"notification failed: <detail>"}` |
 | Payload > 64KB | Close immediately (no response) |
 | Read timeout (5s) | Close (no response) |

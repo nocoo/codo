@@ -72,7 +72,7 @@ codo/
 │   └── Codo/                       ← Thin app shell
 │       └── AppDelegate.swift       ← NSStatusItem, menu, wiring
 ├── Tests/
-│   └── CodoCoreTests/              ← L1 + L3 tests
+│   └── CodoCoreTests/              ← L1 unit tests (swift test)
 ├── cli/                            ← TypeScript CLI
 │   ├── codo.ts                     ← Main script (Bun executable)
 │   ├── codo.test.ts                ← CLI tests (bun test)
@@ -132,9 +132,8 @@ Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no
 
 - On daemon startup: `requestAuthorization(options: [.alert, .sound])`
 - `isAvailable` guard: `Bundle.main.bundleIdentifier != nil`
-- Bare binary: returns `ok: false, "notifications unavailable (no app bundle)"`
 
-> **CRITICAL GOTCHA** (from Owl): `UNUserNotificationCenter.current()` crashes when `bundleIdentifier` is nil (SPM debug builds). MUST guard before any call.
+> **CRITICAL GOTCHA** (from Owl): `UNUserNotificationCenter.current()` crashes when `bundleIdentifier` is nil (SPM debug builds). MUST guard before any call. The guard is a **development-only safety net** — production always runs as `.app` bundle. When hit, returns `ok: false, "notifications unavailable (no app bundle)"`.
 
 #### Permission Model
 

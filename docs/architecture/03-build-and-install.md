@@ -102,6 +102,7 @@ cp -r .build/Codo.app /Applications/Codo.app
 
 # Install CLI to stable path
 mkdir -p "$INSTALL_DIR"
+chmod 700 "$INSTALL_DIR"
 cp cli/codo.ts "$INSTALL_DIR/codo.ts"
 chmod +x "$INSTALL_DIR/codo.ts"
 ln -sf "$INSTALL_DIR/codo.ts" /usr/local/bin/codo
