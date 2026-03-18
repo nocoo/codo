@@ -186,6 +186,64 @@ fi
 # Cleanup temp file
 rm -f /tmp/codo-integ-stderr.txt
 
+# --- Template system ---
+echo ""
+echo "--- Template system ---"
+
+MSG_LOG="$SOCK_DIR/messages.log"
+
+# Test: --template list → exit 0, stderr contains template names
+HOME="$FAKE_HOME" bun "$CLI" --template list >/dev/null 2>/tmp/codo-integ-stderr.txt
+EXIT=$?
+STDERR=$(cat /tmp/codo-integ-stderr.txt)
+if [ "$EXIT" -eq 0 ] && echo "$STDERR" | grep -q "success" && echo "$STDERR" | grep -q "error"; then
+    pass "--template list → exit 0, lists templates"
+else
+    fail "--template list → exit 0, lists templates" "exit=$EXIT stderr='$STDERR'"
+fi
+
+# Test: --template success → exit 0, server receives subtitle
+HOME="$FAKE_HOME" bun "$CLI" "TemplateTest" --template success 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q "Success"; then
+    pass "--template success → server sees subtitle"
+else
+    fail "--template success → server sees subtitle" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: subtitle + threadId roundtrip via stdin
+echo '{"title":"SubThread","subtitle":"MySub","threadId":"t1"}' | HOME="$FAKE_HOME" bun "$CLI" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"subtitle":"MySub"' && echo "$LAST" | grep -q '"threadId":"t1"'; then
+    pass "subtitle+threadId roundtrip via stdin"
+else
+    fail "subtitle+threadId roundtrip via stdin" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: --thread flag → server receives threadId
+HOME="$FAKE_HOME" bun "$CLI" "ThreadTest" --thread "my-build" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"threadId":"my-build"'; then
+    pass "--thread flag → server sees threadId"
+else
+    fail "--thread flag → server sees threadId" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: --silent overrides template sound
+HOME="$FAKE_HOME" bun "$CLI" "SilentTemplate" --template success --silent 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"sound":"none"' && echo "$LAST" | grep -q "Success"; then
+    pass "--silent overrides template sound"
+else
+    fail "--silent overrides template sound" "exit=$EXIT last='$LAST'"
+fi
+
+rm -f /tmp/codo-integ-stderr.txt
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
