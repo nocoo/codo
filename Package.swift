@@ -17,6 +17,11 @@ let package = Package(
             dependencies: ["CodoCore"],
             path: "Sources/Codo"
         ),
+        .executableTarget(
+            name: "CodoTestServer",
+            dependencies: ["CodoCore"],
+            path: "Sources/CodoTestServer"
+        ),
         .testTarget(
             name: "CodoCoreTests",
             dependencies: ["CodoCore"],
