@@ -4,12 +4,22 @@ import Foundation
 public struct CodoMessage: Codable, Sendable {
     public let title: String
     public let body: String?
+    public let subtitle: String?
     public let sound: String?
+    public let threadId: String?
 
-    public init(title: String, body: String?, sound: String?) {
+    public init(
+        title: String,
+        body: String? = nil,
+        subtitle: String? = nil,
+        sound: String? = nil,
+        threadId: String? = nil
+    ) {
         self.title = title
         self.body = body
+        self.subtitle = subtitle
         self.sound = sound
+        self.threadId = threadId
     }
 
     /// Returns the effective sound setting, defaulting to "default" when nil.

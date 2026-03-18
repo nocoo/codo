@@ -15,6 +15,8 @@ struct CodoMessageDecodeTests {
         #expect(msg.title == "T")
         #expect(msg.body == "B")
         #expect(msg.sound == "default")
+        #expect(msg.subtitle == nil)
+        #expect(msg.threadId == nil)
     }
 
     @Test func decodeMinimal() throws {
@@ -23,6 +25,8 @@ struct CodoMessageDecodeTests {
         #expect(msg.title == "T")
         #expect(msg.body == nil)
         #expect(msg.sound == nil)
+        #expect(msg.subtitle == nil)
+        #expect(msg.threadId == nil)
     }
 
     @Test func decodeMissingTitle() throws {
@@ -68,6 +72,43 @@ struct CodoMessageDecodeTests {
         let json = #"{"title":"T","sound":"none"}"#
         let msg = try decoder.decode(CodoMessage.self, from: Data(json.utf8))
         #expect(msg.effectiveSound == "none")
+    }
+
+    @Test func decodeWithSubtitleAndThreadId() throws {
+        let json = #"{"title":"T","subtitle":"✅ Success","threadId":"build"}"#
+        let msg = try decoder.decode(CodoMessage.self, from: Data(json.utf8))
+        #expect(msg.title == "T")
+        #expect(msg.subtitle == "✅ Success")
+        #expect(msg.threadId == "build")
+    }
+
+    @Test func decodeAllFields() throws {
+        let json = #"{"title":"T","body":"B","subtitle":"S","sound":"none","threadId":"tid"}"#
+        let msg = try decoder.decode(CodoMessage.self, from: Data(json.utf8))
+        #expect(msg.title == "T")
+        #expect(msg.body == "B")
+        #expect(msg.subtitle == "S")
+        #expect(msg.sound == "none")
+        #expect(msg.threadId == "tid")
+    }
+
+    @Test func encodeWithSubtitleAndThreadId() throws {
+        let msg = CodoMessage(title: "T", subtitle: "S", threadId: "tid")
+        let data = try JSONEncoder().encode(msg)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(obj?["title"] as? String == "T")
+        #expect(obj?["subtitle"] as? String == "S")
+        #expect(obj?["threadId"] as? String == "tid")
+        #expect(obj?["body"] == nil)
+        #expect(obj?["sound"] == nil)
+    }
+
+    @Test func backwardCompatOldJson() throws {
+        // Old 3-field JSON still decodes fine (new fields default to nil)
+        let json = #"{"title":"T","body":"B","sound":"default"}"#
+        let msg = try decoder.decode(CodoMessage.self, from: Data(json.utf8))
+        #expect(msg.subtitle == nil)
+        #expect(msg.threadId == nil)
     }
 }
 
