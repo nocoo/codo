@@ -1,8 +1,12 @@
 import AppKit
 import CodoCore
+import os
 import ServiceManagement
+import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+private let logger = Logger(subsystem: "ai.hexly.codo.01", category: "app")
+
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
     private var socketServer: SocketServer?
     private var notificationService: NotificationService?
@@ -13,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - App Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         setupStatusItem()
         setupMenu()
         startDaemon()
@@ -120,11 +125,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return .error("notifications unavailable (no app bundle)")
             }
 
-            // Bridge sync handler to async NotificationService
+            // Bridge sync handler to async NotificationService.
+            // Use Task.detached to avoid inheriting MainActor context,
+            // which would deadlock with the semaphore.
             let semaphore = DispatchSemaphore(value: 0)
-            var result: CodoResponse = .error("timeout")
+            nonisolated(unsafe) var result: CodoResponse = .error("timeout")
 
-            Task {
+            Task.detached {
                 result = await service.post(message: message)
                 semaphore.signal()
             }
@@ -140,6 +147,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             fputs("Failed to start socket server: \(error)\n", stderr)
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// Always show banner + sound even when app is "foreground" (menubar apps count).
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler:
+            @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        logger.notice("willPresent called for: \(notification.request.content.title)")
+        completionHandler([.banner, .sound, .list])
     }
 
     @objc private func quitApp() {

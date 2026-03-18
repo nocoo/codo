@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.nocoo.codo</string>
+    <string>ai.hexly.codo.01</string>
     <key>CFBundleName</key>
     <string>Codo</string>
     <key>CFBundleDisplayName</key>
