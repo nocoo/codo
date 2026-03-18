@@ -20,13 +20,16 @@ struct CodoTestServer {
         // Create or truncate the log file
         FileManager.default.createFile(atPath: logPath, contents: nil)
         let logHandle = FileHandle(forWritingAtPath: logPath)!
+        let logQueue = DispatchQueue(label: "codo.test-server.log")
 
         let server = SocketServer(socketPath: socketPath) { message in
-            // Log received message as JSON line
+            // Log received message as JSON line (serialized to avoid interleaving)
             if let data = try? JSONEncoder().encode(message),
                let line = String(data: data, encoding: .utf8) {
                 let entry = line + "\n"
-                logHandle.write(Data(entry.utf8))
+                logQueue.sync {
+                    logHandle.write(Data(entry.utf8))
+                }
             }
 
             if message.title == "fail-me" {

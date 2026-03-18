@@ -158,6 +158,21 @@ describe("parseArgs", () => {
     expect(result).toEqual({ error: "--thread requires a value" });
   });
 
+  test("--thread followed by flag returns error", () => {
+    const result = parseArgs(["Title", "--thread", "--silent"]);
+    expect(result).toEqual({ error: "--thread requires a value" });
+  });
+
+  test("--template followed by flag returns error", () => {
+    const result = parseArgs(["Title", "--template", "--silent"]);
+    expect(result).toEqual({ error: "--template requires a value" });
+  });
+
+  test("--subtitle followed by flag returns error", () => {
+    const result = parseArgs(["Title", "--subtitle", "--thread"]);
+    expect(result).toEqual({ error: "--subtitle requires a value" });
+  });
+
   test("--thread whitespace normalized to omitted", () => {
     const result = parseArgs(["Title", "--thread", ""]);
     expect(result).not.toBeNull();

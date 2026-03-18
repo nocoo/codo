@@ -115,7 +115,7 @@ export function parseArgs(
       silent = true;
     } else if (valueFlagNames.has(arg)) {
       const next = argv[i + 1];
-      if (next === undefined) {
+      if (next === undefined || next.startsWith("--")) {
         return { error: `${arg} requires a value` };
       }
       i++; // consume next token
