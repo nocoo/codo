@@ -207,4 +207,64 @@ describe("cli process", () => {
     expect(stdout).toBe("");
     expect(stderr).toContain("daemon not running");
   });
+
+  test("empty title arg exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath, ""], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    const stdout = await new Response(proc.stdout).text();
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("title is required");
+  });
+
+  test("invalid stdin json exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(["not json at all"]),
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    const stdout = await new Response(proc.stdout).text();
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("invalid json");
+  });
+
+  test("stdin json missing title exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(['{"body":"no title"}']),
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    const stdout = await new Response(proc.stdout).text();
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("title is required");
+  });
+
+  test("args take precedence over stdin", async () => {
+    // Args provide title, stdin also has JSON — args should win
+    // Since daemon isn't running, we expect exit 2 (daemon not running)
+    // not exit 1 (which would indicate stdin parsing was used)
+    const proc = Bun.spawn(["bun", cliPath, "FromArgs"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(['{"title":"FromStdin"}']),
+      env: {
+        ...process.env,
+        HOME: "/tmp/codo-test-nonexistent",
+      },
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("daemon not running");
+  });
 });
