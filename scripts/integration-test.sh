@@ -138,6 +138,51 @@ else
     fail "daemon error → exit 1, stderr='test error'" "exit=$EXIT stderr='$STDERR'"
 fi
 
+# --- Client error paths ---
+echo ""
+echo "--- Client error paths ---"
+
+# Test: invalid stdin JSON → exit 1
+echo '{"bad json' | HOME="$FAKE_HOME" bun "$CLI" >/dev/null 2>/tmp/codo-integ-stderr.txt
+EXIT=$?
+STDERR=$(cat /tmp/codo-integ-stderr.txt)
+if [ "$EXIT" -eq 1 ] && echo "$STDERR" | grep -q "invalid json"; then
+    pass "invalid stdin json → exit 1, 'invalid json'"
+else
+    fail "invalid stdin json → exit 1, 'invalid json'" "exit=$EXIT stderr='$STDERR'"
+fi
+
+# Test: empty title via args → exit 1
+HOME="$FAKE_HOME" bun "$CLI" "" >/dev/null 2>/tmp/codo-integ-stderr.txt
+EXIT=$?
+STDERR=$(cat /tmp/codo-integ-stderr.txt)
+if [ "$EXIT" -eq 1 ] && echo "$STDERR" | grep -q "title is required"; then
+    pass "empty title → exit 1, 'title is required'"
+else
+    fail "empty title → exit 1, 'title is required'" "exit=$EXIT stderr='$STDERR'"
+fi
+
+# Test: concurrent CLI calls → all succeed
+echo ""
+echo "--- Concurrent clients ---"
+
+PIDS=""
+for i in 1 2 3; do
+    HOME="$FAKE_HOME" bun "$CLI" "Concurrent-$i" 2>/dev/null &
+    PIDS="$PIDS $!"
+done
+for pid in $PIDS; do
+    wait "$pid" 2>/dev/null
+done
+# Verify server is still alive by sending one more
+STDOUT=$(HOME="$FAKE_HOME" bun "$CLI" "AfterConcurrent" 2>/dev/null)
+EXIT=$?
+if [ "$EXIT" -eq 0 ] && [ -z "$STDOUT" ]; then
+    pass "concurrent clients → server survives, exit 0"
+else
+    fail "concurrent clients → server survives, exit 0" "exit=$EXIT"
+fi
+
 # Cleanup temp file
 rm -f /tmp/codo-integ-stderr.txt
 
