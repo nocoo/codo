@@ -28,8 +28,17 @@ cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 # Copy Info.plist
 cp "$PROJECT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/"
 
-# Copy app icon
+# Copy app icon (.icns fallback)
 cp "$PROJECT_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/"
+
+# Compile Asset Catalog (provides CFBundleIconName for notification banners)
+xcrun actool "$PROJECT_DIR/Resources/Assets.xcassets" \
+  --compile "$APP_BUNDLE/Contents/Resources" \
+  --platform macosx \
+  --minimum-deployment-target 14.0 \
+  --app-icon AppIcon \
+  --output-partial-info-plist /dev/null \
+  >/dev/null
 
 # Copy menubar template images
 cp "$PROJECT_DIR/Resources/menubar.png" "$APP_BUNDLE/Contents/Resources/"
