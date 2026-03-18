@@ -3,6 +3,9 @@ opt_in_rules:
   - empty_count
   - closure_spacing
   - force_unwrapping
+identifier_name:
+  excluded:
+    - ok
 excluded:
   - .build
   - Tests
