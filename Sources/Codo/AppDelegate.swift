@@ -35,11 +35,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             withLength: NSStatusItem.squareLength
         )
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "bell",
-                accessibilityDescription: "Codo"
-            )
-            button.image?.isTemplate = true
+            // Load template image from bundle Resources
+            if let img = Bundle.main.image(forResource: "menubar") {
+                img.isTemplate = true
+                button.image = img
+            } else {
+                // Fallback to SF Symbol if bundle image not found
+                button.image = NSImage(
+                    systemSymbolName: "bell",
+                    accessibilityDescription: "Codo"
+                )
+                button.image?.isTemplate = true
+            }
         }
     }
 

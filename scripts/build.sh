@@ -28,6 +28,13 @@ cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 # Copy Info.plist
 cp "$PROJECT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/"
 
+# Copy app icon
+cp "$PROJECT_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/"
+
+# Copy menubar template images
+cp "$PROJECT_DIR/Resources/menubar.png" "$APP_BUNDLE/Contents/Resources/"
+cp "$PROJECT_DIR/Resources/menubar@2x.png" "$APP_BUNDLE/Contents/Resources/"
+
 # Sign with Apple Development (stable TCC identity across rebuilds)
 SIGN_IDENTITY="Apple Development"
 TEAM_ID="93WWLTN9XU"
