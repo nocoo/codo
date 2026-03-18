@@ -8,10 +8,12 @@ const VERSION = "0.1.0";
 const SOCKET_PATH = join(homedir(), ".codo", "codo.sock");
 const TIMEOUT_MS = 5000;
 
-interface CodoMessage {
+export interface CodoMessage {
   title: string;
   body?: string;
+  subtitle?: string;
   sound?: string;
+  threadId?: string;
 }
 
 interface CodoResponse {
@@ -19,14 +21,77 @@ interface CodoResponse {
   error?: string;
 }
 
+// --- Templates ---
+
+interface TemplateDefaults {
+  subtitle: string;
+  sound: "default" | "none";
+}
+
+export const TEMPLATES: Record<string, TemplateDefaults> = {
+  success: { subtitle: "✅ Success", sound: "default" },
+  error: { subtitle: "❌ Error", sound: "default" },
+  warning: { subtitle: "⚠️ Warning", sound: "default" },
+  info: { subtitle: "ℹ️ Info", sound: "none" },
+  progress: { subtitle: "🔄 In Progress", sound: "none" },
+  question: { subtitle: "❓ Action Needed", sound: "default" },
+  deploy: { subtitle: "🚀 Deploy", sound: "default" },
+  review: { subtitle: "👀 Review", sound: "default" },
+};
+
+function printTemplateList(): void {
+  console.error("Available templates:\n");
+  console.error("  Name        Subtitle            Sound");
+  console.error("  ----------  ------------------  -------");
+  for (const [name, t] of Object.entries(TEMPLATES)) {
+    const padName = name.padEnd(10);
+    const padSub = t.subtitle.padEnd(18);
+    console.error(`  ${padName}  ${padSub}  ${t.sound}`);
+  }
+}
+
+// --- Parsing ---
+
 function printUsage(): void {
-  console.error(`Usage: codo <title> [body] [--silent]
+  console.error(`Usage: codo <title> [body] [--template <name>] [--subtitle <text>] [--thread <id>] [--silent]
        echo '{"title":"..."}' | codo
 
 Options:
-  --silent     Suppress notification sound
-  --help       Show this help message
-  --version    Show version`);
+  --template <name>   Apply a notification template (use --template list to see all)
+  --subtitle <text>   Set notification subtitle
+  --thread <id>       Set thread ID for notification grouping
+  --silent            Suppress notification sound
+  --help              Show this help message
+  --version           Show version`);
+}
+
+/** Trim a string value; return undefined if empty/whitespace. */
+function normalize(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Apply template defaults to a message. Explicit values win over template.
+ * Exported for testing.
+ */
+export function applyTemplate(
+  message: CodoMessage,
+  templateName: string,
+): { message: CodoMessage } | { error: string } {
+  const tmpl = TEMPLATES[templateName];
+  if (!tmpl) {
+    return { error: `unknown template: ${templateName}` };
+  }
+
+  return {
+    message: {
+      ...message,
+      subtitle: message.subtitle ?? tmpl.subtitle,
+      sound: message.sound ?? tmpl.sound,
+    },
+  };
 }
 
 /**
@@ -35,20 +100,38 @@ Options:
  */
 export function parseArgs(
   argv: string[],
-): { message: CodoMessage } | { error: string } | null {
+): { message: CodoMessage; template?: string } | { error: string } | null {
   const positional: string[] = [];
   let silent = false;
+  let template: string | undefined;
+  let subtitle: string | undefined;
+  let threadId: string | undefined;
 
-  for (const arg of argv) {
+  const valueFlagNames = new Set(["--template", "--subtitle", "--thread"]);
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
     if (arg === "--silent") {
       silent = true;
-    } else if (!arg.startsWith("--")) {
+    } else if (valueFlagNames.has(arg)) {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        return { error: `${arg} requires a value` };
+      }
+      i++; // consume next token
+      if (arg === "--template") template = next;
+      else if (arg === "--subtitle") subtitle = next;
+      else if (arg === "--thread") threadId = next;
+    } else if (arg.startsWith("--")) {
+      // ignore unknown flags
+    } else {
       positional.push(arg);
     }
-    // ignore unknown flags
   }
 
-  if (positional.length === 0) return null;
+  if (positional.length === 0 && !template && !subtitle && !threadId) {
+    return null;
+  }
 
   const title = positional[0];
   if (!title || title.trim().length === 0) {
@@ -56,13 +139,28 @@ export function parseArgs(
   }
 
   const body = positional[1] || undefined;
-  const sound = silent ? "none" : "default";
+  const sound = silent ? "none" : undefined;
 
-  return { message: { title, body, sound } };
+  const message: CodoMessage = { title, body };
+  if (normalize(subtitle) !== undefined) message.subtitle = normalize(subtitle);
+  if (sound !== undefined) message.sound = sound;
+  if (normalize(threadId) !== undefined) message.threadId = normalize(threadId);
+
+  if (template !== undefined) {
+    const applied = applyTemplate(message, template);
+    if ("error" in applied) return applied;
+    return { message: applied.message, template };
+  }
+
+  // No template — apply default sound if not silent
+  if (message.sound === undefined) message.sound = "default";
+
+  return { message, template };
 }
 
 /**
  * Parse stdin JSON into a CodoMessage.
+ * Only wire-format fields accepted; "template" key is ignored.
  * Exported for testing.
  */
 export function parseStdin(
@@ -95,6 +193,15 @@ export function parseStdin(
   }
   if (typeof obj.sound === "string") {
     message.sound = obj.sound;
+  }
+  // Normalize subtitle and threadId — empty/whitespace → omit
+  if (typeof obj.subtitle === "string") {
+    const sub = normalize(obj.subtitle);
+    if (sub !== undefined) message.subtitle = sub;
+  }
+  if (typeof obj.threadId === "string") {
+    const tid = normalize(obj.threadId);
+    if (tid !== undefined) message.threadId = tid;
   }
 
   return { message };
@@ -189,6 +296,13 @@ async function main(): Promise<void> {
 
   if (args.includes("--version")) {
     console.error(`codo ${VERSION}`);
+    process.exit(0);
+  }
+
+  // Handle --template list before normal parsing
+  const templateIdx = args.indexOf("--template");
+  if (templateIdx !== -1 && args[templateIdx + 1] === "list") {
+    printTemplateList();
     process.exit(0);
   }
 
