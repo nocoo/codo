@@ -8,8 +8,8 @@ public protocol NotificationProvider: Sendable {
     /// Request notification permission. Returns true if granted.
     func requestPermission() async -> Bool
 
-    /// Post a notification. Returns nil on success, error string on failure.
-    func post(title: String, body: String?, sound: String) async -> String?
+    /// Post a notification from a CodoMessage. Returns nil on success, error string on failure.
+    func post(message: CodoMessage) async -> String?
 }
 
 /// Notification service that bridges CodoMessage to the notification provider.
@@ -32,11 +32,7 @@ public final class NotificationService: Sendable {
             return .error("notifications unavailable (no app bundle)")
         }
 
-        if let error = await provider.post(
-            title: message.title,
-            body: message.body,
-            sound: message.effectiveSound
-        ) {
+        if let error = await provider.post(message: message) {
             return .error(error)
         }
 

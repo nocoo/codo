@@ -20,7 +20,7 @@ public final class SystemNotificationProvider: NotificationProvider, @unchecked 
         }
     }
 
-    public func post(title: String, body: String?, sound: String) async -> String? {
+    public func post(message: CodoMessage) async -> String? {
         guard isAvailable else {
             return "notifications unavailable (no app bundle)"
         }
@@ -31,11 +31,17 @@ public final class SystemNotificationProvider: NotificationProvider, @unchecked 
         }
 
         let content = UNMutableNotificationContent()
-        content.title = title
-        if let body {
+        content.title = message.title
+        if let body = message.body {
             content.body = body
         }
-        if sound == "default" {
+        if let subtitle = message.subtitle {
+            content.subtitle = subtitle
+        }
+        if let threadId = message.threadId {
+            content.threadIdentifier = threadId
+        }
+        if message.effectiveSound == "default" {
             content.sound = .default
         }
 

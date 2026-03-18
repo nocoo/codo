@@ -9,7 +9,7 @@ final class MockNotificationProvider: NotificationProvider, @unchecked Sendable 
     var mockIsAvailable = true
     var mockPermissionGranted = true
     var mockPostError: String?
-    var postedMessages: [(title: String, body: String?, sound: String)] = []
+    var postedMessages: [CodoMessage] = []
 
     var isAvailable: Bool { mockIsAvailable }
 
@@ -17,8 +17,8 @@ final class MockNotificationProvider: NotificationProvider, @unchecked Sendable 
         mockPermissionGranted
     }
 
-    func post(title: String, body: String?, sound: String) async -> String? {
-        postedMessages.append((title: title, body: body, sound: sound))
+    func post(message: CodoMessage) async -> String? {
+        postedMessages.append(message)
         return mockPostError
     }
 }
@@ -37,7 +37,7 @@ struct NotificationServiceTests {
         #expect(mock.postedMessages.count == 1)
         #expect(mock.postedMessages[0].title == "Hello")
         #expect(mock.postedMessages[0].body == "World")
-        #expect(mock.postedMessages[0].sound == "default")
+        #expect(mock.postedMessages[0].effectiveSound == "default")
     }
 
     @Test func postWithExplicitSound() async {
@@ -47,7 +47,7 @@ struct NotificationServiceTests {
         let msg = CodoMessage(title: "T", body: nil, sound: "none")
         let response = await service.post(message: msg)
         #expect(response.isOk == true)
-        #expect(mock.postedMessages[0].sound == "none")
+        #expect(mock.postedMessages[0].effectiveSound == "none")
     }
 
     @Test func unavailableProvider() async {
@@ -71,6 +71,18 @@ struct NotificationServiceTests {
         let response = await service.post(message: msg)
         #expect(response.isOk == false)
         #expect(response.errorMessage == "notification failed: something")
+    }
+
+    @Test func postWithSubtitleAndThreadId() async {
+        let mock = MockNotificationProvider()
+        let service = NotificationService(provider: mock)
+
+        let msg = CodoMessage(title: "T", body: "B", subtitle: "✅ Success", threadId: "build")
+        let response = await service.post(message: msg)
+        #expect(response.isOk == true)
+        #expect(mock.postedMessages.count == 1)
+        #expect(mock.postedMessages[0].subtitle == "✅ Success")
+        #expect(mock.postedMessages[0].threadId == "build")
     }
 
     @Test func requestPermissionGranted() async {
