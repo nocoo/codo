@@ -61,6 +61,8 @@ File: `cli/codo.test.ts`, run with `bun test`.
 | no args | `[]` | error/usage |
 | --help | `["--help"]` | print help |
 | --version | `["--version"]` | print version |
+| args + stdin | args=`["B"]`, stdin=`{"title":"A"}` | args win, title="B" |
+| empty stdin no args | stdin empty, no args | error/usage |
 
 **JSON construction**:
 | Test | Input | Expected |
@@ -97,9 +99,9 @@ Script-based: spin up a real `SocketServer` on a temp socket, call from TS CLI, 
 
 | Test | Scenario | Expected |
 |------|----------|----------|
-| CLI → server happy path | `codo.ts` sends to temp socket, mock notification handler | exit 0, stdout ok |
-| server not running | CLI tries to connect, no server | exit 2, stderr "not running" |
-| client timeout | server delays > 5s | exit 3, stderr timeout |
+| CLI → server happy path | `codo.ts` sends to temp socket, mock notification handler | exit 0, no stdout, no stderr |
+| server not running | CLI tries to connect, no server | exit 2, stderr contains "not running" |
+| client timeout | server delays > 5s | exit 3, stderr contains "timeout" |
 
 ## L4 — E2E Checklist
 
@@ -111,8 +113,9 @@ Script-based: spin up a real `SocketServer` on a temp socket, call from TS CLI, 
 - [ ] `codesign -v .build/Codo.app` passes
 
 ### Install
-- [ ] `cp -r .build/Codo.app /Applications/Codo.app`
-- [ ] `ln -sf $(pwd)/cli/codo.ts /usr/local/bin/codo`
+- [ ] `./scripts/install.sh` completes
+- [ ] `~/.codo/codo.ts` exists and is executable
+- [ ] `/usr/local/bin/codo` → `~/.codo/codo.ts`
 - [ ] `codo --version` prints version
 
 ### Daemon

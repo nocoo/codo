@@ -84,11 +84,15 @@ cli/
 
 ## Installation
 
+Both `.app` and CLI are installed to stable paths. No dependency on the source repo after install.
+
 ### scripts/install.sh
 
 ```bash
 #!/bin/bash
 set -euo pipefail
+
+INSTALL_DIR="$HOME/.codo"
 
 # Build Swift daemon
 ./scripts/build.sh
@@ -96,10 +100,14 @@ set -euo pipefail
 # Install .app
 cp -r .build/Codo.app /Applications/Codo.app
 
-# Install CLI (symlink Bun script into PATH)
-chmod +x cli/codo.ts
-ln -sf "$(cd cli && pwd)/codo.ts" /usr/local/bin/codo
+# Install CLI to stable path
+mkdir -p "$INSTALL_DIR"
+cp cli/codo.ts "$INSTALL_DIR/codo.ts"
+chmod +x "$INSTALL_DIR/codo.ts"
+ln -sf "$INSTALL_DIR/codo.ts" /usr/local/bin/codo
 ```
+
+After install, the repo can be moved or deleted. The CLI lives at `~/.codo/codo.ts`, symlinked from `/usr/local/bin/codo`.
 
 ### Verify (order matters)
 

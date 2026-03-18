@@ -206,12 +206,35 @@ codo --version
 ```
 
 Logic:
-1. Parse args: `codo [title] [body] [--silent] [--help] [--version]`
-2. Or detect piped stdin (`!Bun.stdin.isTTY`), read JSON
-3. Construct `CodoMessage` JSON
-4. Connect to `~/.codo/codo.sock` (Bun native Unix socket)
-5. Send JSON + `\n`, read response
-6. Print errors to stderr, exit with code
+1. `--help` / `--version` → print and exit (checked first, regardless of stdin)
+2. If positional args present → use args as title/body (**args always win over stdin**)
+3. Else if stdin is piped (`!Bun.stdin.isTTY`) → read JSON from stdin
+4. Else (no args, no stdin) → print usage, exit(1)
+5. Construct `CodoMessage` JSON
+6. Connect to `~/.codo/codo.sock` (Bun native Unix socket)
+7. Send JSON + `\n`, read response
+8. On success: exit 0, **no stdout** (silent success)
+9. On failure: print error to stderr, exit with code
+
+**Edge cases**:
+| Scenario | Behavior |
+|----------|----------|
+| `echo '{"title":"A"}' \| codo "B"` | Args win → title is "B" (stdin ignored) |
+| `echo '{"title":"A"}' \| codo --help` | `--help` wins |
+| `echo '' \| codo` | No args, piped stdin, empty → error exit(1) |
+| `codo` (no args, tty) | Print usage, exit(1) |
+
+### Output Contract
+
+| Condition | stdout | stderr | Exit |
+|-----------|--------|--------|------|
+| Success (`ok:true`) | *(nothing)* | *(nothing)* | 0 |
+| Daemon error (`ok:false`) | *(nothing)* | error string from daemon | 1 |
+| Bad args / empty input | *(nothing)* | error message | 1 |
+| Daemon not running | *(nothing)* | `codo daemon not running` | 2 |
+| Connection error | *(nothing)* | error message | 3 |
+
+CLI never writes to stdout. Success = exit 0 + silence. Errors go to stderr.
 
 ### Exit Codes
 
@@ -225,10 +248,8 @@ Logic:
 ### Install
 
 ```bash
-# Symlink into PATH
-ln -sf $(pwd)/cli/codo.ts /usr/local/bin/codo
-# Or via install script
 ./scripts/install.sh
+# Copies codo.ts to ~/.codo/codo.ts, symlinks /usr/local/bin/codo
 ```
 
 Requires Bun runtime installed on the machine.
