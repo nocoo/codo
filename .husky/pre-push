@@ -1,12 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "=== L1 + L2: Full test suite ==="
-swiftlint lint --strict --quiet
+echo "=== L1: Swift Unit Tests ==="
 swift test 2>&1
-cd cli && bunx biome check . && bun test 2>&1 && cd ..
 
-echo "=== L3: Integration tests ==="
+echo "=== L1: TS Unit Tests ==="
+cd cli && bun test 2>&1 && cd ..
+
+echo "=== L2: Swift Lint ==="
+swiftlint lint --strict --quiet
+
+echo "=== L2: TS Lint ==="
+cd cli && bunx biome check . && cd ..
+
+echo "=== L3: Integration Tests ==="
 if [ -f scripts/integration-test.sh ]; then
   bash scripts/integration-test.sh
 else
