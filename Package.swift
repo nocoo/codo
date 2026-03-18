@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "Codo",
     platforms: [
-        .macOS(.v14),
+        .macOS(.v14)
     ],
     targets: [
         .target(
@@ -21,6 +21,6 @@ let package = Package(
             name: "CodoCoreTests",
             dependencies: ["CodoCore"],
             path: "Tests/CodoCoreTests"
-        ),
+        )
     ]
 )

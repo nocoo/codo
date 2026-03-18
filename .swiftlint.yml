@@ -1,0 +1,8 @@
+strict: true
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - force_unwrapping
+excluded:
+  - .build
+  - Tests

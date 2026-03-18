@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "=== L1 + L2: Full test suite ==="
+swiftlint lint --strict --quiet
+swift test 2>&1
+cd cli && bunx biome check . && bun test 2>&1 && cd ..
+
+echo "=== L3: Integration tests ==="
+if [ -f scripts/integration-test.sh ]; then
+  bash scripts/integration-test.sh
+else
+  echo "⚠ integration-test.sh not found, skipping L3"
+fi
+
+echo "✓ pre-push passed"

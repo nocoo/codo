@@ -1,0 +1,11 @@
+{
+  "name": "codo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9"
+  }
+}

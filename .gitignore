@@ -5,3 +5,5 @@
 DerivedData/
 .DS_Store
 Package.resolved
+node_modules/
+bun.lock
