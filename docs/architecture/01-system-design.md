@@ -37,7 +37,7 @@ UNUserNotificationCenter → macOS system toast
 ┌─────────────────────────────────────────────────┐
 │  Layer 1: Swift Menubar App (Codo.app)          │
 │                                                 │
-│  - NSStatusItem with SF Symbol icon             │
+│  - NSStatusItem with custom template image       │
 │  - SocketServer listening on UDS                │
 │  - NotificationService → UNUserNotificationCenter│
 │  - Right-click menu (version, login item, quit) │
@@ -69,8 +69,10 @@ codo/
 │   │   ├── CodoMessage.swift       ← Message + Response types
 │   │   ├── SocketServer.swift      ← UDS listener
 │   │   └── NotificationService.swift ← UNUserNotificationCenter wrapper
-│   └── Codo/                       ← Thin app shell
-│       └── AppDelegate.swift       ← NSStatusItem, menu, wiring
+│   ├── Codo/                       ← Thin app shell
+│   │   └── AppDelegate.swift       ← NSStatusItem, menu, wiring
+│   └── CodoTestServer/             ← Minimal test server for L3 integration
+│       └── CodoTestServer.swift
 ├── Tests/
 │   └── CodoCoreTests/              ← L1 unit tests (swift test)
 ├── cli/                            ← TypeScript CLI
@@ -78,10 +80,16 @@ codo/
 │   ├── codo.test.ts                ← CLI tests (bun test)
 │   └── package.json                ← Metadata only (no deps needed)
 ├── Resources/
-│   └── Info.plist                  ← App bundle metadata
+│   ├── Info.plist                  ← App bundle metadata
+│   ├── AppIcon.icns                ← App icon (fallback)
+│   ├── Assets.xcassets/            ← Asset Catalog (notification banner icon)
+│   ├── menubar.png                 ← Menubar template image (18×18)
+│   └── menubar@2x.png             ← Menubar template image (36×36)
 ├── scripts/
-│   ├── build.sh                    ← Build + assemble .app
-│   └── install.sh                  ← Install .app + symlink CLI
+│   ├── build.sh                    ← Build + assemble + sign .app
+│   ├── install.sh                  ← Install .app + symlink CLI
+│   ├── integration-test.sh         ← L3 integration tests
+│   └── e2e-test.sh                ← L4 semi-automated E2E tests
 └── docs/
 ```
 
@@ -107,7 +115,8 @@ Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no
 
 #### AppDelegate
 
-- Creates `NSStatusItem` with SF Symbol `bell` (`isTemplate = true`)
+- Creates `NSStatusItem` with custom template image (`menubar.png`, `isTemplate = true`)
+- Falls back to SF Symbol `bell` if image not found in bundle
 - Owns `SocketServer` and `NotificationService`
 - Provides right-click `NSMenu`
 
@@ -147,11 +156,14 @@ Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no
 
 ### MenuBar Icon
 
-**SF Symbol `bell`**, `isTemplate = true`.
+**Custom template image** (`Resources/menubar.png` / `menubar@2x.png`), `isTemplate = true`.
 
+- Loaded via `Bundle.main.image(forResource: "menubar")`
+- Falls back to SF Symbol `bell` if bundle image not found
+- `isTemplate = true` — auto-adapts to light/dark menu bar
 - Never draw SF Symbol into canvas for template icons (Owl lesson)
 - Never use `contentTintColor` — pollutes button title text (Owl lesson)
-- MVP: static `bell` only. Badge states are future work.
+- MVP: static icon only. Badge states are future work.
 
 ### App Lifecycle
 
@@ -175,6 +187,7 @@ Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no
 Package.swift
 ├── CodoCore        (.target)          ← Business logic, zero AppKit
 ├── Codo            (.executableTarget) ← App shell, depends on CodoCore
+├── CodoTestServer  (.executableTarget) ← Test server for L3 integration
 └── CodoCoreTests   (.testTarget)      ← Tests, depends on CodoCore
 ```
 
@@ -188,12 +201,21 @@ codo "Build Done"                          # title only
 codo "Build Done" "All 42 tests passed"   # title + body
 codo "Build Done" "Passed" --silent        # no sound
 
+# Templates (set subtitle + sound automatically)
+codo "Build Done" "Passed" --template success
+codo "Build Failed" "3 errors" --template error
+codo "Deploying..." --template progress
+
+# Custom subtitle and thread grouping
+codo "PR Ready" --subtitle "Review" --thread pr-42
+
 # Stdin JSON (advanced)
-echo '{"title":"Build Done","body":"Passed"}' | codo
+echo '{"title":"Build Done","body":"Passed","subtitle":"✅ Success"}' | codo
 
 # Flags
 codo --help
 codo --version
+codo --template list
 ```
 
 ### Implementation
@@ -258,9 +280,11 @@ Requires Bun runtime installed on the machine.
 ```typescript
 // Request (CLI → Daemon)
 interface CodoMessage {
-  title: string;     // required
-  body?: string;     // optional
+  title: string;       // required
+  body?: string;       // optional
+  subtitle?: string;   // optional — displayed below title, above body
   sound?: "default" | "none"; // default: "default"
+  threadId?: string;   // optional — groups notifications in Notification Center
 }
 
 // Response (Daemon → CLI)
@@ -284,7 +308,7 @@ interface CodoResponse {
 | App entry | Manual `NSApplication` | Full control, no SwiftUI needed |
 | Notification | UNUserNotificationCenter | Native macOS toast, respects DND |
 | Permission | Request at daemon startup | Avoid first-notification latency |
-| Icon | SF Symbol `bell` | No asset needed, auto light/dark |
+| Icon | Custom template image | Hummingbird logo, `isTemplate` for auto light/dark |
 | Login item | SMAppService | macOS 13+ native |
 | Instance check | Socket connectivity test | Sufficient, no flock/PID |
 

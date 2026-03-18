@@ -10,7 +10,7 @@
 |------|---------|--------|---------|
 | Debug | `swift build` | `.build/debug/Codo` | Tests, socket development |
 | Release | `swift build -c release` | `.build/release/Codo` | Performance testing |
-| **App Bundle** | `./scripts/build.sh` | `.build/Codo.app` | **Production install** |
+| **App Bundle** | `./scripts/build.sh` | `.build/release/Codo.app` | **Production install** |
 
 Bare binary cannot show notifications (no bundleIdentifier). Production requires `.app` bundle.
 
@@ -23,6 +23,10 @@ Codo.app/
 │   ├── MacOS/
 │   │   └── Codo
 │   └── Resources/
+│       ├── AppIcon.icns        ← App icon (legacy fallback)
+│       ├── Assets.car          ← Compiled Asset Catalog (notification banner icon)
+│       ├── menubar.png         ← Menubar template image (18×18)
+│       └── menubar@2x.png     ← Menubar template image (36×36, Retina)
 ```
 
 ### Info.plist
@@ -34,8 +38,10 @@ Codo.app/
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>dev.nocoo.codo</string>
+    <string>ai.hexly.codo.01</string>
     <key>CFBundleName</key>
+    <string>Codo</string>
+    <key>CFBundleDisplayName</key>
     <string>Codo</string>
     <key>CFBundleExecutable</key>
     <string>Codo</string>
@@ -45,23 +51,45 @@ Codo.app/
     <string>0.1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>NSUserNotificationUsageDescription</key>
+    <string>Codo displays notifications from Claude Code hooks.</string>
 </dict>
 </plist>
 ```
+
+**Note**: `CFBundleIconName` is required for notification banners to display the app icon on `LSUIElement` menubar apps. `CFBundleIconFile` (`.icns`) alone is not sufficient — macOS notification system reads icons from the compiled Asset Catalog (`.car`).
 
 ### scripts/build.sh
 
 ```bash
 swift build -c release
-rm -rf .build/Codo.app
-mkdir -p .build/Codo.app/Contents/{MacOS,Resources}
-cp .build/release/Codo .build/Codo.app/Contents/MacOS/
-cp Resources/Info.plist .build/Codo.app/Contents/
-codesign --force --options runtime --sign "Apple Development" .build/Codo.app
+rm -rf .build/release/Codo.app
+mkdir -p .build/release/Codo.app/Contents/{MacOS,Resources}
+cp .build/release/Codo .build/release/Codo.app/Contents/MacOS/
+cp Resources/Info.plist .build/release/Codo.app/Contents/
+cp Resources/AppIcon.icns .build/release/Codo.app/Contents/Resources/
+
+# Compile Asset Catalog (provides CFBundleIconName for notification banners)
+xcrun actool Resources/Assets.xcassets \
+  --compile .build/release/Codo.app/Contents/Resources \
+  --platform macosx --minimum-deployment-target 14.0 \
+  --app-icon AppIcon --output-partial-info-plist /dev/null
+
+# Copy menubar template images
+cp Resources/menubar.png .build/release/Codo.app/Contents/Resources/
+cp Resources/menubar@2x.png .build/release/Codo.app/Contents/Resources/
+
+codesign --force --options runtime \
+  --sign "Apple Development" --team-id "93WWLTN9XU" \
+  .build/release/Codo.app
 ```
 
 ### Code Signing

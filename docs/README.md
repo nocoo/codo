@@ -2,5 +2,5 @@
 
 | Directory | Description |
 |-----------|-------------|
-| [architecture/](architecture/) | System design, IPC protocol, build pipeline |
-| [features/](features/) | Feature iteration docs |
+| [architecture/](architecture/) | System design, IPC protocol, build pipeline, testing strategy |
+| [features/](features/) | Feature iteration docs (notification templates) |

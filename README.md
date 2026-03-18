@@ -1,18 +1,35 @@
 # Codo
 
-macOS menubar daemon + CLI for displaying system toast notifications. Designed as a notification bridge for Claude Code hooks.
+macOS menubar daemon + CLI for displaying system toast notifications. Designed as a notification bridge for Claude Code hooks and other AI agent workflows.
 
 ```bash
-# From any Claude Code hook:
+# Simple notification
 codo "Build Done" "All 42 tests passed"
 
-# Or via stdin JSON:
-echo '{"title":"Build Done","body":"All tests passed"}' | codo
+# With template (sets subtitle + sound automatically)
+codo "Build Done" "42 tests passed" --template success
+codo "Build Failed" "3 errors" --template error
+codo "Deploying..." --template progress
+
+# Group related notifications
+codo "Step 1/3" --template progress --thread deploy-v1.2
+codo "Step 2/3" --template progress --thread deploy-v1.2
+codo "Deploy Done" --template success --thread deploy-v1.2
+
+# Via stdin JSON
+echo '{"title":"Build Done","body":"All tests passed","subtitle":"✅ Success"}' | codo
+
+# List available templates
+codo --template list
 ```
 
 ## Architecture
 
 Two layers: **Swift menubar app** (daemon, listens on Unix Domain Socket, shows toast) + **TypeScript CLI** (Bun script, sends messages to daemon).
+
+```
+Claude Code hook → codo CLI (Bun) → UDS → Codo.app (Swift) → macOS notification
+```
 
 ## Development
 
@@ -44,10 +61,10 @@ Hooks **cannot be skipped** — this is by design. Every commit must pass unit t
 ### Running Tests Manually
 
 ```bash
-# L1: Swift unit tests (34 tests)
+# L1: Swift unit tests (46 tests)
 swift test
 
-# L1: TypeScript unit tests (26 tests)
+# L1: TypeScript unit tests (60 tests)
 cd cli && bun test
 
 # L2: Swift lint
@@ -56,8 +73,11 @@ swiftlint lint --strict --quiet
 # L2: TypeScript lint
 cd cli && bunx biome check .
 
-# L3: Integration tests (8 tests)
+# L3: Integration tests (16 tests)
 ./scripts/integration-test.sh
+
+# L4: E2E manual test
+./scripts/e2e-test.sh
 
 # Swift coverage report (target: 90%+ on CodoCore)
 swift test --enable-code-coverage
@@ -86,8 +106,36 @@ xcrun llvm-cov report \
 ./scripts/install.sh
 ```
 
+## CLI Usage
+
+```bash
+codo <title> [body] [--template <name>] [--subtitle <text>] [--thread <id>] [--silent]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--template <name>` | Apply a notification template (sets subtitle + sound) |
+| `--subtitle <text>` | Set notification subtitle (overrides template) |
+| `--thread <id>` | Group notifications by thread ID |
+| `--silent` | Suppress notification sound (overrides template) |
+| `--template list` | List all available templates |
+
+### Templates
+
+| Template | Subtitle | Sound | Use Case |
+|----------|----------|-------|----------|
+| `success` | ✅ Success | default | Build passed, tests green |
+| `error` | ❌ Error | default | Build failed, test failures |
+| `warning` | ⚠️ Warning | default | Lint warnings, deprecations |
+| `info` | ℹ️ Info | none | Status updates (silent) |
+| `progress` | 🔄 In Progress | none | Long-running tasks (silent) |
+| `question` | ❓ Action Needed | default | User input required |
+| `deploy` | 🚀 Deploy | default | Deployment lifecycle |
+| `review` | 👀 Review | default | PR/code review requests |
+
 ## Docs
 
 See [docs/](docs/) for design documents:
 
 - [Architecture](docs/architecture/) — System design, IPC protocol, build, testing, MVP plan
+- [Features](docs/features/) — Feature iteration docs (notification templates)

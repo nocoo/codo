@@ -91,11 +91,11 @@ Phase 5 (CLI) can run in parallel with Phases 2-4 (Swift core). They converge at
 ## MVP Definition of Done
 
 - [x] `swift build` — no warnings
-- [x] `swift test` — all pass (34 tests), coverage 91% on testable CodoCore
+- [x] `swift test` — all pass (46 tests), coverage 91% on testable CodoCore
 - [x] `swiftlint lint --strict` — pass
-- [x] `bun test` (in cli/) — all pass (26 tests)
+- [x] `bun test` (in cli/) — all pass (60 tests)
 - [x] `bunx biome check` (in cli/) — pass
 - [x] `./scripts/build.sh` — signed `.app`
-- [x] `./scripts/integration-test.sh` — pass (8 tests)
-- [ ] L4 E2E checklist — manual, pre-release
-- [ ] `codo "MVP Done" "All layers green"` — macOS toast appears
+- [x] `./scripts/integration-test.sh` — pass (16 tests)
+- [x] L4 E2E checklist — manual, pre-release
+- [x] `codo "MVP Done" "All layers green"` — macOS toast appears

@@ -326,17 +326,20 @@ New L3 tests:
 
 ## Atomic Commits
 
-| # | Type | Message | Content |
-|---|------|---------|---------|
+| # | Type | Message | Status |
+|---|------|---------|--------|
 | 1 | `docs` | `docs: add notification templates design` | ✅ Done (098f679) |
 | 2 | `docs` | `docs: tighten template design spec` | ✅ Done (2aa5b63) |
-| 3 | `docs` | `docs: fix L3 verification and sync protocol docs` | This revision — log-based L3, threadId wording, update `02-ipc-protocol.md` |
-| 4 | `feat` | `feat: extend CodoMessage with subtitle and threadId` | Swift model + encode/decode tests |
-| 5 | `refactor` | `refactor: change NotificationProvider to accept CodoMessage` | Protocol change + mock update + all existing tests pass |
-| 6 | `feat` | `feat: apply subtitle and threadId in SystemNotificationProvider` | Real provider uses new fields |
-| 7 | `feat` | `feat: add message logging to CodoTestServer` | Test server logs received messages for L3 verification |
-| 8 | `feat` | `feat: add template system to CLI` | TS templates + parseArgs/parseStdin + template logic + TS tests |
-| 9 | `test` | `test: add template integration tests` | L3 roundtrip via message log + --template list |
+| 3 | `docs` | `docs: fix L3 verification and sync protocol docs` | ✅ Done (5842fb4) |
+| 4 | `feat` | `feat: extend CodoMessage with subtitle and threadId` | ✅ Done (40e89de) |
+| 5 | `refactor` | `refactor: change NotificationProvider to accept CodoMessage` | ✅ Done (a7200c5) |
+| 6 | `feat` | `feat: add message logging to CodoTestServer` | ✅ Done (f22b266) |
+| 7 | `feat` | `feat: add template system to CLI` | ✅ Done (2b87fc2) |
+| 8 | `test` | `test: add template integration tests` | ✅ Done (17645ea) |
+| 9 | `fix` | `fix: serialize test server log writes and reject flags as values` | ✅ Done (7621537) |
+| 10 | `fix` | `fix: add asset catalog so notification banners show app icon` | ✅ Done (fe5ff00) |
+
+**Note**: Commit 6 (`feat: apply subtitle and threadId in SystemNotificationProvider`) was folded into commit 5 — the provider refactor and new field application were done together since they were tightly coupled.
 
 ## Verification
 
