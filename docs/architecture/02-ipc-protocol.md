@@ -38,14 +38,16 @@ Request/response, one exchange per connection. No persistent connections.
 ### Request (CLI → Daemon)
 
 ```json
-{"title": "Build Done", "body": "All 42 tests passed", "sound": "default"}
+{"title": "Build Done", "body": "All 42 tests passed", "subtitle": "✅ Success", "sound": "default", "threadId": "build"}
 ```
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `title` | `String` | ✅ | — | Notification title |
 | `body` | `String` | ❌ | `nil` | Notification body text |
+| `subtitle` | `String` | ❌ | `nil` | Notification subtitle (below title, above body) |
 | `sound` | `String` | ❌ | `"default"` | `"default"` or `"none"` |
+| `threadId` | `String` | ❌ | `nil` | Groups notifications in Notification Center |
 
 ### Response (Daemon → CLI)
 
@@ -129,11 +131,15 @@ On daemon startup:
 ## Wire Examples
 
 ```
-# Happy path
+# Happy path (minimal — title only)
 → {"title":"Done"}\n
 ← {"ok":true}\n
 
-# With body and sound
+# With all fields
+→ {"title":"Build Failed","body":"3 tests failed","subtitle":"❌ Error","sound":"default","threadId":"build"}\n
+← {"ok":true}\n
+
+# Backward compatible (old client, no subtitle/threadId)
 → {"title":"Build Failed","body":"3 tests failed","sound":"default"}\n
 ← {"ok":true}\n
 

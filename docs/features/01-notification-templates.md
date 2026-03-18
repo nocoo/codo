@@ -43,7 +43,7 @@ codo "Deploy Done"  --template success  --thread deploy-v1.2
 codo "Deploy Failed" --template error   --thread deploy-v1.2
 ```
 
-If `--thread` is omitted, `threadId` is `nil` and macOS uses default grouping (all Codo notifications in one stack).
+If `--thread` is omitted, `threadId` is `nil` and macOS applies its default grouping behavior.
 
 ### Agent Notification Scenarios
 
@@ -273,8 +273,11 @@ func post(message: CodoMessage) async -> String? {
 ### Test Infrastructure
 
 #### `Sources/CodoTestServer/CodoTestServer.swift`
-- Add echo-me mode: when `title == "echo-me"`, respond with `{"ok":true,"echo":<received JSON>}` so L3 tests can assert on exact fields the server received
-- Requires `CodoResponse` to NOT change (echo is outside the normal response contract — raw JSON assembly or a separate response type)
+- Add message logging: every received message is appended as a JSON line to a log file (`$SOCK_DIR/messages.log`)
+- L3 tests send a message via CLI, then read the log file to assert on exact fields the server received
+- This avoids changing the CLI's output contract (success = exit 0, no stdout)
+
+**Why not echo via response?** The CLI only checks `response.ok` and exits — it never prints extra response fields to stdout. Changing that would break the "silent success" contract. Writing to a sidecar log file is the cleanest way to verify server-side field reception without altering the CLI.
 
 ### Tests
 
@@ -305,34 +308,35 @@ func post(message: CodoMessage) async -> String? {
 
 Current L3 harness only checks exit code and stderr, which cannot verify that the daemon received `subtitle`/`threadId` correctly. To enable real verification:
 
-**CodoTestServer enhancement**: When the test server receives a message, if `title == "echo-me"`, respond with `{"ok":true,"echo":"<received JSON>"}` instead of plain `{"ok":true}`. This lets L3 assert on the exact fields the server received.
+**CodoTestServer message log**: The test server appends every received `CodoMessage` as a JSON line to `$SOCK_DIR/messages.log`. L3 tests send a message via CLI, then read the last line of the log file to assert on fields.
 
 ```bash
 # L3 test: subtitle + threadId roundtrip
-STDOUT=$(echo '{"title":"echo-me","subtitle":"✅ test","threadId":"t1"}' \
-  | HOME="$FAKE_HOME" bun "$CLI" 2>/dev/null)
-# CodoTestServer echoes back received fields
-echo "$STDOUT" | jq -e '.subtitle == "✅ test" and .threadId == "t1"'
+echo '{"title":"LogTest","subtitle":"✅ test","threadId":"t1"}' \
+  | HOME="$FAKE_HOME" bun "$CLI" 2>/dev/null
+# Read last logged message from server's sidecar log
+LAST=$(tail -1 "$SOCK_DIR/messages.log")
+echo "$LAST" | jq -e '.subtitle == "✅ test" and .threadId == "t1"'
 ```
 
 New L3 tests:
 - `--template list` → exit 0, stderr contains "success" and "error"
-- subtitle+threadId roundtrip via echo-me (verify server received fields)
-- template expansion roundtrip: `--template success` → server sees subtitle "✅ Success"
+- subtitle+threadId roundtrip via message log (verify server received fields)
+- template expansion roundtrip: `--template success` → server log shows subtitle "✅ Success"
 
 ## Atomic Commits
 
 | # | Type | Message | Content |
 |---|------|---------|---------|
 | 1 | `docs` | `docs: add notification templates design` | ✅ Done (098f679) |
-| 2 | `docs` | `docs: tighten template design spec` | This revision — threadId decoupling, parsing rules, stdin semantics, L3 echo-me, empty normalization |
-| 3 | `feat` | `feat: extend CodoMessage with subtitle and threadId` | Swift model + encode/decode tests |
-| 4 | `refactor` | `refactor: change NotificationProvider to accept CodoMessage` | Protocol change + mock update + all existing tests pass |
-| 5 | `feat` | `feat: apply subtitle and threadId in SystemNotificationProvider` | Real provider uses new fields |
-| 6 | `feat` | `feat: add echo-me mode to CodoTestServer` | Test server echoes received fields for L3 verification |
-| 7 | `feat` | `feat: add template system to CLI` | TS templates + parseArgs/parseStdin + template logic + TS tests |
-| 8 | `test` | `test: add template integration tests` | L3 roundtrip via echo-me + --template list |
-| 9 | `docs` | `docs: update protocol docs for new fields` | Update `02-ipc-protocol.md` wire format |
+| 2 | `docs` | `docs: tighten template design spec` | ✅ Done (2aa5b63) |
+| 3 | `docs` | `docs: fix L3 verification and sync protocol docs` | This revision — log-based L3, threadId wording, update `02-ipc-protocol.md` |
+| 4 | `feat` | `feat: extend CodoMessage with subtitle and threadId` | Swift model + encode/decode tests |
+| 5 | `refactor` | `refactor: change NotificationProvider to accept CodoMessage` | Protocol change + mock update + all existing tests pass |
+| 6 | `feat` | `feat: apply subtitle and threadId in SystemNotificationProvider` | Real provider uses new fields |
+| 7 | `feat` | `feat: add message logging to CodoTestServer` | Test server logs received messages for L3 verification |
+| 8 | `feat` | `feat: add template system to CLI` | TS templates + parseArgs/parseStdin + template logic + TS tests |
+| 9 | `test` | `test: add template integration tests` | L3 roundtrip via message log + --template list |
 
 ## Verification
 
