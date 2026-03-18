@@ -195,6 +195,10 @@ describe("cli process", () => {
       stdout: "pipe",
       stderr: "pipe",
       stdin: new Blob(['{"title":"Test"}']),
+      env: {
+        ...process.env,
+        HOME: "/tmp/codo-test-nonexistent",
+      },
     });
     const exitCode = await proc.exited;
     const stderr = await new Response(proc.stderr).text();
