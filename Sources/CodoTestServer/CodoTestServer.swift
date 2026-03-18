@@ -4,6 +4,7 @@ import Foundation
 /// Minimal test server for L3 integration tests.
 /// Starts a SocketServer on the given path, prints READY to stderr, waits for SIGTERM.
 /// Message handler returns ok for all valid messages, except title "fail-me" which returns error.
+/// All received messages are logged as JSON lines to `messages.log` in the socket directory.
 @main
 struct CodoTestServer {
     static func main() throws {
@@ -13,8 +14,21 @@ struct CodoTestServer {
         }
 
         let socketPath = CommandLine.arguments[1]
+        let socketDir = (socketPath as NSString).deletingLastPathComponent
+        let logPath = (socketDir as NSString).appendingPathComponent("messages.log")
+
+        // Create or truncate the log file
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        let logHandle = FileHandle(forWritingAtPath: logPath)!
 
         let server = SocketServer(socketPath: socketPath) { message in
+            // Log received message as JSON line
+            if let data = try? JSONEncoder().encode(message),
+               let line = String(data: data, encoding: .utf8) {
+                let entry = line + "\n"
+                logHandle.write(Data(entry.utf8))
+            }
+
             if message.title == "fail-me" {
                 return .error("test error")
             }
