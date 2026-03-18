@@ -1,6 +1,6 @@
 # 02 - AI Guardian
 
-> An AI-powered notification guardian that maintains context, rewrites notifications intelligently, and replaces raw message forwarding with semantically aware notification delivery.
+> An AI-powered notification guardian that maintains context, rewrites notifications intelligently, and upgrades raw message forwarding with semantically aware notification delivery.
 
 ## Problem
 
@@ -138,6 +138,8 @@ The Guardian is not a chatbot — it's a **state machine** that maintains struct
 
 The Guardian identifies projects by **`cwd`** (working directory) from hook events. This is the most reliable project key — different Claude Code sessions in the same directory are part of the same project.
 
+**Path canonicalization**: The Guardian applies `realpath()` to `cwd` before using it as a project key. This ensures that symlinks, `../` relative components, and worktree paths all resolve to the same canonical project identity. Without this, the same repository accessed via `/Users/you/project`, `/Users/you/symlink-to-project`, or `/Users/you/project/src/..` would be treated as separate projects.
+
 | Hook Field | Maps To | Purpose |
 |------------|---------|---------|
 | `cwd` | **Project** | Primary key — identifies which project this event belongs to |
@@ -152,7 +154,7 @@ The Guardian identifies projects by **`cwd`** (working directory) from hook even
 | `SessionStart` | Register session under project (by cwd), record model |
 | `PostToolUse` | Update project's last_status for significant results (test/build/git) |
 | `PostToolUseFailure` | Update project's last_status with error info |
-| `Stop` | Update project's task description from `last_assistant_message` |
+| `Stop` | Update project's task description from `last_assistant_message` (only if newer/more specific than current task — avoid overwriting a detailed task description with a generic "done" message) |
 | `Notification` | Enrich with project context, record in recent_notifications |
 | `SessionEnd` | Mark session as ended (project persists) |
 
@@ -179,7 +181,7 @@ The LLM sees structured state, not a chat transcript. This is fundamentally diff
 
 The three-layer model keeps context bounded:
 
-- **Layer 1 (Working State Store)**: Fixed-size structured data. ~2-5K tokens. Never needs compression — stale projects are evicted after inactivity timeout.
+- **Layer 1 (Working State Store)**: Fixed-size structured data. ~2-5K tokens. Never needs compression — stale projects are evicted after inactivity timeout. **Eviction rule**: `SessionEnd` marks a session as inactive; if no new events arrive for a project within 24 hours, the project is evicted from Layer 1 and its key state (task, last_status) is compressed into a one-line entry in Layer 3.
 - **Layer 2 (Recent Event Buffer)**: Rolling window of last ~50 raw events. ~10-30K tokens. Oldest events are dropped as new ones arrive. No LLM call needed — pure FIFO.
 - **Layer 3 (Summary Snapshot)**: Generated when Layer 2 drops events that contained important state. The LLM summarizes the dropped events into a compact paragraph (~500 tokens) that updates Layer 1's task/status fields.
 
@@ -576,6 +578,17 @@ When the daemon receives a `HookEvent`:
 - Guardian ON → forward to Guardian for AI processing
 - Guardian OFF → extract best-effort title/body from hook payload and deliver as raw notification via the existing CodoMessage path
 
+**Guardian OFF fallback mapping** (priority order per hook type):
+
+| Hook Event | Fallback title | Fallback body |
+|------------|---------------|---------------|
+| `Notification` | `payload.title` \|\| "Codo" | `payload.message` |
+| `Stop` | "Task Complete" | first 100 chars of `last_assistant_message` |
+| `PostToolUse` | `tool_name` result | first 100 chars of `tool_response` (only for test/build/git commands; other Bash results are suppressed) |
+| `PostToolUseFailure` | `tool_name` failed | first 100 chars of `error` |
+| `SessionStart` | "Session Started" | `model` |
+| `SessionEnd` | (suppress — no notification) | — |
+
 ### Data Flow Summary
 
 | Hook Event | Frequency | Richness | Latency Sensitivity | Guardian Strategy |
@@ -593,7 +606,7 @@ PostToolUse is the hot path — potentially dozens of events per task. The Guard
 
 1. **Filter at hook level**: Only Bash tool calls are hooked (matcher: `"Bash"`). Edit/Write/Read are excluded.
 2. **Filter at Guardian level**: Within Bash results, only test/build/git outputs trigger LLM analysis. Short commands (ls, cat, etc.) are accumulated as context but don't trigger LLM calls.
-3. **Batch processing**: The Guardian accumulates PostToolUse events and only calls the LLM when a significant event occurs (Stop, Notification, or a matching PostToolUse pattern).
+3. **Batch processing**: The Guardian accumulates PostToolUse events and only calls the LLM when a significant event occurs (Stop, Notification, or a matching PostToolUse pattern). **Important**: batching only affects whether the LLM is invoked — all events are always written into the state (Layer 1 status update + Layer 2 event buffer) regardless of whether they trigger an LLM call.
 4. **Context vs. trigger**: Most PostToolUse events are added to the Guardian's context window (cheap, no LLM call) but only a few trigger actual notification generation (expensive, LLM call).
 
 ```
