@@ -36,10 +36,10 @@ This runs `husky` via the `prepare` script, which sets up `.husky/` as the git h
 
 | Hook | Stage | What runs |
 |------|-------|-----------|
-| **pre-commit** | L1 | `swift test` + `bun test` (unit tests only — fast feedback) |
-| **pre-push** | L1+L2+L3 | Unit tests + SwiftLint strict + Biome lint + integration tests |
+| **pre-commit** | L1+L2 | `swift test` + `bun test` + SwiftLint strict + Biome lint |
+| **pre-push** | L1+L2+L3 | Unit tests + lint + integration tests |
 
-Hooks **cannot be skipped** — this is by design. Every commit must pass unit tests.
+Hooks **cannot be skipped** — this is by design. Every commit must pass unit tests and lint.
 
 ### Running Tests Manually
 
