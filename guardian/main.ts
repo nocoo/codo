@@ -97,14 +97,24 @@ async function processHookEvent(
   // Classify
   const { shouldTriggerLLM } = classifyEvent(event);
 
+  process.stderr.write(
+    `guardian: event=${event._hook} shouldTriggerLLM=${shouldTriggerLLM}\n`,
+  );
+
   if (shouldTriggerLLM) {
     // Send to LLM for intelligent processing
     const result = await llmClient.process(event, state);
+    process.stderr.write(
+      `guardian: LLM result action=${result.action} notification=${JSON.stringify(result.notification)} reason=${result.reason ?? "none"}\n`,
+    );
     emitAction(result);
   } else {
     // Non-LLM events: use fallback or suppress
     const notification = fallbackNotification(event);
     if (notification) {
+      process.stderr.write(
+        `guardian: fallback notification title=${notification.title}\n`,
+      );
       emitAction({ action: "send", notification });
     }
     // contextual/noise without notification → no output (silent accumulation)
@@ -114,6 +124,9 @@ async function processHookEvent(
 // Only run main() when executed directly (not imported for testing)
 if (import.meta.main) {
   const config = readConfig();
+  process.stderr.write(
+    `guardian: config provider=${config.provider} model=${config.model} sdkType=${config.sdkType} baseURL=${config.baseURL}\n`,
+  );
   const state = createStateStore();
   const llmClient = createLLMClient(config);
 

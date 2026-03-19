@@ -11,7 +11,7 @@ import type { StateStore } from "./state";
 import { serializeForPrompt } from "./state";
 import { fallbackNotification } from "./fallback";
 
-const LLM_TIMEOUT_MS = 10_000;
+const LLM_TIMEOUT_MS = 30_000;
 
 export interface LLMClient {
   process(event: HookEvent, state: StateStore): Promise<GuardianResult>;
@@ -335,20 +335,31 @@ function createAnthropicLLMClient(
 
         clearTimeout(timeout);
 
+        process.stderr.write(
+          `guardian: LLM response stop_reason=${response.stop_reason} content_types=${response.content.map((b) => b.type).join(",")}\n`,
+        );
+
         const toolUse = response.content.find(
           (block): block is Anthropic.ToolUseBlock =>
             block.type === "tool_use",
         );
 
         if (toolUse) {
+          process.stderr.write(
+            `guardian: tool_use name=${toolUse.name} input=${JSON.stringify(toolUse.input)}\n`,
+          );
           return parseAnthropicToolUse(toolUse);
         }
 
+        process.stderr.write("guardian: no tool_use block found, falling back\n");
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }
           : { action: "suppress", reason: "no tool use from LLM" };
       } catch (error) {
+        process.stderr.write(
+          `guardian: Anthropic LLM catch: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}\n`,
+        );
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }
