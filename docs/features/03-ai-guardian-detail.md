@@ -12,7 +12,7 @@
 | `Sources/CodoCore/GuardianProcess.swift` | Spawn/restart/kill TS child process, stdin/stdout line pipe |
 | `Sources/CodoCore/GuardianProtocol.swift` | `GuardianProvider` protocol (fire-and-forget line sending) |
 | `Sources/CodoCore/KeychainService.swift` | Read/write API key via Security.framework |
-| `Sources/CodoCore/SettingsStore.swift` | UserDefaults wrapper for Guardian settings |
+| `Sources/CodoCore/GuardianSettings.swift` | UserDefaults wrapper for Guardian settings |
 | `Sources/Codo/SettingsWindow.swift` | NSWindow + NSViewController for settings panel |
 | `Sources/Codo/SettingsViewModel.swift` | ObservableObject wrapper for settings binding (app target only) |
 | `Sources/Codo/AppDelegate.swift` | Extended: Guardian lifecycle, menu items, settings trigger |
@@ -21,12 +21,12 @@
 
 | File | Purpose |
 |------|---------|
-| `guardian/main.ts` | Entry point — stdin reader, JSON-RPC dispatch, event loop |
+| `guardian/main.ts` | Entry point — stdin line reader, event dispatch, event loop |
 | `guardian/state.ts` | Three-layer state model (WorkingStateStore, EventBuffer, SummarySnapshot) |
 | `guardian/llm.ts` | OpenAI-compatible client wrapper, tool definitions, prompt assembly |
 | `guardian/classifier.ts` | Event classification (important / contextual / noise) |
 | `guardian/fallback.ts` | Guardian OFF / LLM failure fallback mapping |
-| `guardian/types.ts` | Shared TypeScript types (HookEvent, GuardianConfig, JsonRpc) |
+| `guardian/types.ts` | Shared TypeScript types (HookEvent, GuardianConfig, event stream messages) |
 | `guardian/package.json` | Dependencies: `openai`, `js-tiktoken` |
 | `guardian/biome.json` | Linter config (consistent with `cli/biome.json`) |
 | `guardian/tsconfig.json` | TypeScript config |
@@ -133,8 +133,8 @@ public protocol GuardianProvider: Sendable {
 // In GuardianProcess.start():
 process.environment = [
     "CODO_API_KEY": apiKey,       // from KeychainService
-    "CODO_BASE_URL": baseURL,     // from SettingsStore
-    "CODO_MODEL": model,          // from SettingsStore
+    "CODO_BASE_URL": baseURL,     // from GuardianSettings
+    "CODO_MODEL": model,          // from GuardianSettings
     "CODO_CONTEXT_LIMIT": "\(contextLimit)",
 ]
 ```
@@ -201,12 +201,12 @@ public enum KeychainService {
 }
 ```
 
-#### `SettingsStore`
+#### `GuardianSettings`
 
 **Layer separation**: `CodoCore` contains a plain `struct GuardianSettings` with no UI dependencies. The app target (`Sources/Codo/`) wraps it in an `ObservableObject` view model for the settings window. This keeps `CodoCore` free of Combine/observation imports.
 
 ```swift
-// Sources/CodoCore/SettingsStore.swift
+// Sources/CodoCore/GuardianSettings.swift
 
 /// Pure data model for Guardian settings. No UI dependencies.
 /// Reads/writes UserDefaults, but has no observation/binding support.
@@ -289,18 +289,18 @@ final class SettingsViewModel: ObservableObject {
 #### `guardian/types.ts`
 
 ```typescript
-// JSON-RPC types
-export interface JsonRpcRequest {
-  jsonrpc: "2.0";
-  id: number;
-  method: "process_message" | "process_hook";
-  params: Record<string, unknown>;
-}
+// Event stream types (NOT JSON-RPC — bidirectional line-delimited JSON)
 
-export interface JsonRpcResponse {
-  jsonrpc: "2.0";
-  id: number;
-  result: GuardianResult;
+// Daemon → Guardian (stdin): one JSON line per event
+// The daemon writes the raw hook JSON (with _hook field) or a CodoMessage directly.
+// No envelope, no id, no method — just the payload itself.
+// The Guardian determines event type by checking for `_hook` field (same discriminator as Swift side).
+
+// Guardian → Daemon (stdout): one JSON line per action
+export interface GuardianAction {
+  action: "send" | "suppress";
+  notification?: NotificationPayload;  // present when action == "send"
+  reason?: string;                     // present when action == "suppress"
 }
 
 export interface GuardianResult {
@@ -308,6 +308,11 @@ export interface GuardianResult {
   notification?: NotificationPayload;
   reason?: string;
 }
+
+// NOTE: GuardianResult and GuardianAction are identical — the Guardian emits
+// actions on stdout in the same shape. Kept as two names for clarity:
+// GuardianResult is used in TypeScript internally, GuardianAction is the wire type
+// that the Swift daemon decodes from stdout.
 
 export interface NotificationPayload {
   title: string;
@@ -549,7 +554,7 @@ Each commit is independently testable. Tests are written **before or alongside**
 | 3 | `refactor` | `refactor: add raw handler to SocketServer` | `Sources/CodoCore/SocketServer.swift` | `Tests/CodoCoreTests/SocketTests.swift` (update) |
 | 4 | `feat` | `feat: add --hook flag to CLI` | `cli/codo.ts` | `cli/codo.test.ts` (new hook tests) |
 | 5 | `test` | `test: add hook event integration tests` | `Sources/CodoTestServer/CodoTestServer.swift`, `scripts/integration-test.sh` | L3: hook event roundtrip |
-| 6 | `feat` | `feat: add KeychainService and GuardianSettings` | `Sources/CodoCore/KeychainService.swift`, `Sources/CodoCore/SettingsStore.swift` | `Tests/CodoCoreTests/SettingsStoreTests.swift` |
+| 6 | `feat` | `feat: add KeychainService and GuardianSettings` | `Sources/CodoCore/KeychainService.swift`, `Sources/CodoCore/GuardianSettings.swift` | `Tests/CodoCoreTests/GuardianSettingsTests.swift` |
 | 7 | `feat` | `feat: add GuardianProtocol and GuardianProcess` | `Sources/CodoCore/GuardianProtocol.swift`, `Sources/CodoCore/GuardianProcess.swift` | `Tests/CodoCoreTests/GuardianProcessTests.swift` |
 | 8 | `feat` | `feat: add settings window UI` | `Sources/Codo/SettingsWindow.swift`, `Sources/Codo/SettingsViewModel.swift` | L4: manual visual check |
 | 9 | `refactor` | `refactor: wire MessageRouter and Guardian into AppDelegate` | `Sources/Codo/AppDelegate.swift` | `Tests/CodoCoreTests/MessageRouterTests.swift` (integration) |
@@ -583,7 +588,7 @@ Create the routing logic that peeks at raw JSON to determine message type.
 | route HookEvent notification | `{"_hook":"notification","title":"P"}` | `.hookEvent(hook:"notification", ...)` |
 | route invalid JSON | `"not json"` | throws `invalidJSON` |
 | route empty object | `{}` | throws (no title, no _hook → CodoMessage decode fails) |
-| route CodoMessage missing title | `{"body":"B"}` | throws `missingTitle` |
+| route CodoMessage missing title | `{"body":"B"}` | throws `invalidJSON` (no `_hook` and CodoMessage decode fails) |
 | hook event preserves raw JSON | `{"_hook":"stop","custom":123}` | rawJSON contains original bytes |
 
 #### Commit 3: `refactor: add raw handler to SocketServer`
@@ -654,12 +659,12 @@ Create the routing logic that peeks at raw JSON to determine message type.
 - `readAPIKey()`, `writeAPIKey(_:)`, `deleteAPIKey()` using Security.framework
 - Uses `kSecClassGenericPassword` with service `"ai.hexly.codo.01"` and account `"guardian-api-key"`
 
-**`Sources/CodoCore/SettingsStore.swift`**:
+**`Sources/CodoCore/GuardianSettings.swift`**:
 - `GuardianSettings` struct (plain data, no UI dependencies) with UserDefaults read/write
 - Properties: `guardianEnabled`, `baseURL`, `model`, `contextLimit`
 - `toEnvironment(apiKey:) -> [String: String]` for passing config to Guardian child process via env vars
 
-**Tests** (`Tests/CodoCoreTests/SettingsStoreTests.swift`):
+**Tests** (`Tests/CodoCoreTests/GuardianSettingsTests.swift`):
 | Test | Scenario | Expected |
 |------|----------|----------|
 | default values | fresh GuardianSettings | enabled=false, baseURL=openai, model=gpt-4o-mini, contextLimit=160000 |
@@ -828,13 +833,12 @@ Each module is a self-contained unit with its own test file. All tests run via `
 `guardian/main.ts` + `guardian/main.test.ts`:
 | Test | Scenario | Expected |
 |------|----------|----------|
-| stdin parse | JSON-RPC line on stdin | parsed as request |
-| stdout response | send action | JSON-RPC response on stdout |
-| process_hook method | hook event | classified, state updated, LLM called if needed |
-| process_message method | CodoMessage | processed as direct notification |
-| unknown method | bad method name | error response |
-| malformed JSON-RPC | invalid JSON | error response |
-| sequential requests | 3 requests in sequence | all processed, state accumulated |
+| stdin parse | JSON line on stdin | parsed as event |
+| stdout action | send action | GuardianAction JSON line on stdout |
+| hook event dispatch | hook event line | classified, state updated, LLM called if needed |
+| CodoMessage dispatch | CodoMessage line (no `_hook`) | processed as direct notification |
+| malformed JSON | invalid JSON line | error logged, no crash |
+| sequential events | 3 events in sequence | all processed, state accumulated |
 
 ---
 
@@ -848,7 +852,7 @@ Each module is a self-contained unit with its own test file. All tests run via `
 |------|-----------|-------|
 | `Tests/CodoCoreTests/MessageRouterTests.swift` | Route CodoMessage, route hook event, invalid JSON, preserve raw bytes, handler integration with mock providers | ~10 |
 | `Tests/CodoCoreTests/SocketTests.swift` | Raw handler refactor: readUntilNewline, raw handler receives data, legacy handler compat, hook event through raw handler | ~4 |
-| `Tests/CodoCoreTests/SettingsStoreTests.swift` | Default values, read/write each setting, toGuardianConfig | ~5 |
+| `Tests/CodoCoreTests/GuardianSettingsTests.swift` | Default values, read/write each setting, toGuardianConfig | ~5 |
 | `Tests/CodoCoreTests/GuardianProcessTests.swift` | Mock provider: send line, isAlive, stop, restart exceeded, stdout reader mock | ~5 |
 | **Subtotal** | | **~24 new** |
 
@@ -913,7 +917,7 @@ cd guardian && bunx biome check . && cd ..
 
 **Note**: Full Guardian roundtrip with real LLM is not testable in L3 (requires API key). L3 tests the plumbing (CLI → daemon → Guardian process spawn → stdin/stdout → notification delivery) using a mock Guardian script that echoes back a fixed response.
 
-**Mock Guardian for L3**: A minimal Bun script (`scripts/mock-guardian.ts`) that reads JSON-RPC from stdin, returns a fixed `send` response. The test server spawns this instead of the real Guardian.
+**Mock Guardian for L3**: A minimal Bun script (`scripts/mock-guardian.ts`) that reads JSON lines from stdin and writes a fixed `send` action to stdout. The test server spawns this instead of the real Guardian.
 
 ### L4 — E2E Manual Checklist
 
@@ -1034,11 +1038,11 @@ swift test && cd cli && bun test && cd .. && cd guardian && bun test && cd .. \
 | # | Commit | Status |
 |---|--------|--------|
 | 1 | `docs: add AI Guardian detailed design` | |
-| 2 | `feat: add HookEvent and MessageRouter` | |
+| 2 | `feat: add MessageRouter for discriminated union dispatch` | |
 | 3 | `refactor: add raw handler to SocketServer` | |
 | 4 | `feat: add --hook flag to CLI` | |
 | 5 | `test: add hook event integration tests` | |
-| 6 | `feat: add KeychainService and SettingsStore` | |
+| 6 | `feat: add KeychainService and GuardianSettings` | |
 | 7 | `feat: add GuardianProtocol and GuardianProcess` | |
 | 8 | `feat: add settings window UI` | |
 | 9 | `refactor: wire MessageRouter and Guardian into AppDelegate` | |
