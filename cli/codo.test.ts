@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   TEMPLATES,
+  VALID_HOOK_TYPES,
   applyTemplate,
   parseArgs,
+  parseHook,
   parseStdin,
 } from "./codo.ts";
 
@@ -548,5 +550,181 @@ describe("cli process", () => {
     const stderr = await new Response(proc.stderr).text();
     expect(exitCode).toBe(1);
     expect(stderr).toContain("unknown template: nope");
+  });
+});
+
+// MARK: - parseHook
+
+describe("parseHook", () => {
+  test("injects _hook field", () => {
+    const result = parseHook("stop", '{"session_id":"s1"}');
+    expect("payload" in result).toBe(true);
+    if ("payload" in result) {
+      expect(result.payload._hook).toBe("stop");
+      expect(result.payload.session_id).toBe("s1");
+    }
+  });
+
+  test("all valid hook types accepted", () => {
+    for (const hookType of VALID_HOOK_TYPES) {
+      const result = parseHook(hookType, '{"session_id":"s1"}');
+      expect("payload" in result).toBe(true);
+      if ("payload" in result) {
+        expect(result.payload._hook).toBe(hookType);
+      }
+    }
+  });
+
+  test("unknown hook type returns error", () => {
+    const result = parseHook("bogus", '{"session_id":"s1"}');
+    expect(result).toEqual({ error: "unknown hook type: bogus" });
+  });
+
+  test("empty input returns error", () => {
+    const result = parseHook("stop", "");
+    expect(result).toEqual({ error: "empty input" });
+  });
+
+  test("invalid json returns error", () => {
+    const result = parseHook("stop", "{bad");
+    expect(result).toEqual({ error: "invalid json" });
+  });
+
+  test("preserves all stdin fields", () => {
+    const input = JSON.stringify({
+      session_id: "s1",
+      cwd: "/tmp/project",
+      tool_name: "Bash",
+      command: "npm test",
+      custom_field: 42,
+    });
+    const result = parseHook("post-tool-use", input);
+    expect("payload" in result).toBe(true);
+    if ("payload" in result) {
+      expect(result.payload._hook).toBe("post-tool-use");
+      expect(result.payload.session_id).toBe("s1");
+      expect(result.payload.cwd).toBe("/tmp/project");
+      expect(result.payload.tool_name).toBe("Bash");
+      expect(result.payload.command).toBe("npm test");
+      expect(result.payload.custom_field).toBe(42);
+    }
+  });
+
+  test("json array returns error", () => {
+    const result = parseHook("stop", "[1,2,3]");
+    expect(result).toEqual({ error: "invalid json" });
+  });
+
+  test("notification hook type", () => {
+    const result = parseHook(
+      "notification",
+      '{"title":"Perm","message":"Approve?"}',
+    );
+    expect("payload" in result).toBe(true);
+    if ("payload" in result) {
+      expect(result.payload._hook).toBe("notification");
+      expect(result.payload.title).toBe("Perm");
+    }
+  });
+
+  test("session-end hook type (no cwd)", () => {
+    const result = parseHook("session-end", '{"session_id":"s1"}');
+    expect("payload" in result).toBe(true);
+    if ("payload" in result) {
+      expect(result.payload._hook).toBe("session-end");
+      expect(result.payload.cwd).toBeUndefined();
+    }
+  });
+});
+
+// MARK: - CLI hook process tests
+
+describe("cli hook process", () => {
+  const cliPath = `${import.meta.dir}/codo.ts`;
+
+  test("--hook without value exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath, "--hook"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(['{"session_id":"s1"}']),
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--hook requires a value");
+  });
+
+  test("--hook unknown type exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath, "--hook", "bogus"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(['{"session_id":"s1"}']),
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("unknown hook type: bogus");
+  });
+
+  test("--hook with title arg exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath, "Title", "--hook", "stop"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(['{"session_id":"s1"}']),
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--hook cannot be used with positional args");
+  });
+
+  test("--hook with empty stdin exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath, "--hook", "stop"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob([""]),
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("empty input");
+  });
+
+  test("--hook with invalid stdin json exits 1", async () => {
+    const proc = Bun.spawn(["bun", cliPath, "--hook", "stop"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(["{bad json"]),
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("invalid json");
+  });
+
+  test("--hook stop with valid stdin, no daemon exits 2", async () => {
+    const proc = Bun.spawn(["bun", cliPath, "--hook", "stop"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: new Blob(['{"session_id":"s1","cwd":"/tmp"}']),
+      env: {
+        ...process.env,
+        HOME: "/tmp/codo-test-nonexistent",
+      },
+    });
+    const exitCode = await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("daemon not running");
+  });
+
+  test("--help includes --hook option", async () => {
+    const proc = Bun.spawn(["bun", cliPath, "--help"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    expect(stderr).toContain("--hook");
   });
 });

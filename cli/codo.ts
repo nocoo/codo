@@ -21,6 +21,17 @@ interface CodoResponse {
   error?: string;
 }
 
+// --- Hook Types ---
+
+export const VALID_HOOK_TYPES = new Set([
+  "stop",
+  "notification",
+  "post-tool-use",
+  "post-tool-use-failure",
+  "session-start",
+  "session-end",
+]);
+
 // --- Templates ---
 
 interface TemplateDefaults {
@@ -55,11 +66,13 @@ function printTemplateList(): void {
 function printUsage(): void {
   console.error(`Usage: codo <title> [body] [--template <name>] [--subtitle <text>] [--thread <id>] [--silent]
        echo '{"title":"..."}' | codo
+       echo '{"session_id":"..."}' | codo --hook stop
 
 Options:
   --template <name>   Apply a notification template (use --template list to see all)
   --subtitle <text>   Set notification subtitle
   --thread <id>       Set thread ID for notification grouping
+  --hook <type>       Forward raw stdin JSON as hook event (stop, notification, etc.)
   --silent            Suppress notification sound
   --help              Show this help message
   --version           Show version`);
@@ -208,11 +221,44 @@ export function parseStdin(
 }
 
 /**
- * Send a message to the daemon via Unix Domain Socket.
+ * Parse hook event from stdin JSON. Injects `_hook` field.
+ * Returns the raw object to send to daemon (not a CodoMessage).
+ * Exported for testing.
+ */
+export function parseHook(
+  hookType: string,
+  stdinJSON: string,
+): { payload: Record<string, unknown> } | { error: string } {
+  if (!VALID_HOOK_TYPES.has(hookType)) {
+    return { error: `unknown hook type: ${hookType}` };
+  }
+
+  const trimmed = stdinJSON.trim();
+  if (trimmed.length === 0) {
+    return { error: "empty input" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return { error: "invalid json" };
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { error: "invalid json" };
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  return { payload: { ...obj, _hook: hookType } };
+}
+
+/**
+ * Send a JSON payload to the daemon via Unix Domain Socket.
  * Returns the parsed CodoResponse.
  */
 async function sendToDaemon(
-  message: CodoMessage,
+  payload: Record<string, unknown>,
   socketPath: string = SOCKET_PATH,
 ): Promise<CodoResponse> {
   if (!existsSync(socketPath)) {
@@ -245,8 +291,8 @@ async function sendToDaemon(
           }
         },
         open(socket) {
-          const payload = `${JSON.stringify(message)}\n`;
-          socket.write(payload);
+          const data = `${JSON.stringify(payload)}\n`;
+          socket.write(data);
           socket.flush();
         },
         error(_socket, err) {
@@ -304,6 +350,49 @@ async function main(): Promise<void> {
   if (templateIdx !== -1 && args[templateIdx + 1] === "list") {
     printTemplateList();
     process.exit(0);
+  }
+
+  // Handle --hook <type>: forward raw stdin JSON with _hook discriminator
+  const hookIdx = args.indexOf("--hook");
+  if (hookIdx !== -1) {
+    const hookType = args[hookIdx + 1];
+    if (hookType === undefined || hookType.startsWith("--")) {
+      console.error("--hook requires a value");
+      process.exit(1);
+    }
+
+    // --hook conflicts with positional args
+    const positional = args.filter(
+      (a, i) => !a.startsWith("--") && i !== hookIdx + 1,
+    );
+    if (positional.length > 0) {
+      console.error("--hook cannot be used with positional args");
+      process.exit(1);
+    }
+
+    // Read stdin
+    const stdinText = await Bun.stdin.text();
+    const hookResult = parseHook(hookType, stdinText);
+    if ("error" in hookResult) {
+      console.error(hookResult.error);
+      process.exit(1);
+    }
+
+    try {
+      const response = await sendToDaemon(hookResult.payload);
+      if (!response.ok) {
+        console.error(response.error || "unknown error");
+        process.exit(1);
+      }
+      process.exit(0);
+    } catch (err) {
+      if (err instanceof DaemonError) {
+        console.error(err.message);
+        process.exit(err.exitCode);
+      }
+      console.error("unexpected error");
+      process.exit(3);
+    }
   }
 
   // Args always win over stdin
