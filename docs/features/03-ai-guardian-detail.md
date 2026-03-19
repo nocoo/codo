@@ -8,13 +8,13 @@
 
 | File | Purpose |
 |------|---------|
-| `Sources/CodoCore/HookEvent.swift` | `HookEvent` struct (discriminated union counterpart to `CodoMessage`) |
-| `Sources/CodoCore/MessageRouter.swift` | Decode raw JSON, dispatch `CodoMessage` vs `HookEvent` |
-| `Sources/CodoCore/GuardianProcess.swift` | Spawn/restart/kill TS child process, stdin/stdout JSON-RPC pipe |
-| `Sources/CodoCore/GuardianProtocol.swift` | `GuardianProvider` protocol + JSON-RPC message types |
+| `Sources/CodoCore/MessageRouter.swift` | Decode raw JSON, dispatch `CodoMessage` vs hook event (raw bytes) |
+| `Sources/CodoCore/GuardianProcess.swift` | Spawn/restart/kill TS child process, stdin/stdout line pipe |
+| `Sources/CodoCore/GuardianProtocol.swift` | `GuardianProvider` protocol (fire-and-forget line sending) |
 | `Sources/CodoCore/KeychainService.swift` | Read/write API key via Security.framework |
 | `Sources/CodoCore/SettingsStore.swift` | UserDefaults wrapper for Guardian settings |
 | `Sources/Codo/SettingsWindow.swift` | NSWindow + NSViewController for settings panel |
+| `Sources/Codo/SettingsViewModel.swift` | ObservableObject wrapper for settings binding (app target only) |
 | `Sources/Codo/AppDelegate.swift` | Extended: Guardian lifecycle, menu items, settings trigger |
 
 ### New TypeScript Modules
@@ -41,8 +41,8 @@
 
 | File | Changes |
 |------|---------|
-| `Sources/CodoCore/SocketServer.swift` | Replace `MessageHandler = (CodoMessage) -> CodoResponse` with `RawMessageHandler = (Data) -> CodoResponse` |
-| `Sources/CodoTestServer/CodoTestServer.swift` | Handle both `CodoMessage` and `HookEvent` in log output |
+| `Sources/CodoCore/SocketServer.swift` | Refactor `handleClient()` to extract byte-reading, add `RawMessageHandler` path, preserve `MessageHandler` convenience |
+| `Sources/CodoTestServer/CodoTestServer.swift` | Switch to `RawMessageHandler`, use `MessageRouter.route()` to handle both message types |
 | `Package.swift` | No new targets — Guardian is TS/Bun, not Swift |
 
 ---
@@ -51,30 +51,7 @@
 
 ### Swift Side
 
-#### `HookEvent`
-
-```swift
-// Sources/CodoCore/HookEvent.swift
-
-/// Raw hook event from Claude Code, forwarded via CLI --hook flag.
-/// The `_hook` field is the discriminator that distinguishes this from CodoMessage.
-public struct HookEvent: Codable, Sendable {
-    /// Hook type: "stop", "notification", "post-tool-use",
-    /// "post-tool-use-failure", "session-start", "session-end"
-    public let hook: String
-
-    /// Raw JSON payload from Claude Code (preserved as-is for Guardian).
-    /// Contains session_id, cwd, transcript_path, and event-specific fields.
-    public let payload: [String: AnyCodable]
-
-    enum CodingKeys: String, CodingKey {
-        case hook = "_hook"
-        case payload // virtual — everything except _hook
-    }
-}
-```
-
-**`AnyCodable`**: A lightweight `Codable` wrapper for `Any` — only needs to round-trip JSON. The daemon does not inspect payload fields; it forwards the entire JSON blob to the Guardian. We can use a simpler approach: the daemon decodes raw JSON as `[String: Any]`, extracts `_hook`, and forwards the original JSON bytes to the Guardian without re-encoding.
+**Design principle**: The Swift daemon never decodes hook event payloads. It only peeks at the `_hook` field to decide routing, then forwards the original raw JSON bytes to the Guardian. No `HookEvent` struct exists in Swift — that type lives only in TypeScript where the Guardian actually inspects the fields.
 
 #### `MessageRouter`
 
@@ -83,20 +60,30 @@ public struct HookEvent: Codable, Sendable {
 
 /// Result of routing a raw JSON message.
 public enum RoutedMessage: Sendable {
+    /// Standard notification — decoded into CodoMessage.
     case notification(CodoMessage)
+    /// Hook event — raw JSON bytes forwarded to Guardian as-is.
+    /// `hook` is the event type (e.g., "stop", "notification"), extracted for logging only.
     case hookEvent(hook: String, rawJSON: Data)
 }
 
-/// Routes raw JSON to either CodoMessage or HookEvent path.
+public enum MessageRouterError: Error {
+    case invalidJSON
+}
+
+/// Routes raw JSON to either CodoMessage or hook event path.
+/// Does NOT decode hook events — only peeks at `_hook` field.
 public enum MessageRouter {
     public static func route(_ data: Data) throws -> RoutedMessage {
-        // Peek at JSON for "_hook" field
-        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let obj else { throw MessageRouterError.invalidJSON }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw MessageRouterError.invalidJSON
+        }
 
         if let hook = obj["_hook"] as? String {
+            // Hook event: forward raw bytes, don't decode further
             return .hookEvent(hook: hook, rawJSON: data)
         } else {
+            // Standard notification: decode as CodoMessage
             let message = try JSONDecoder().decode(CodoMessage.self, from: data)
             return .notification(message)
         }
@@ -106,25 +93,20 @@ public enum MessageRouter {
 
 #### `GuardianProvider` Protocol
 
+The daemon→Guardian channel is **fire-and-forget**: the daemon writes a JSON line to stdin and does not wait for a response. The Guardian reads events, processes them asynchronously, and writes notification commands to stdout when ready. The daemon reads stdout in a background loop and posts notifications.
+
+This is NOT request-response JSON-RPC. It's a **bidirectional event stream**:
+
+```
+Daemon → Guardian (stdin):  one JSON line per event (fire-and-forget)
+Guardian → Daemon (stdout): one JSON line per notification action (async)
+```
+
 ```swift
 // Sources/CodoCore/GuardianProtocol.swift
 
-/// JSON-RPC message to send to Guardian process via stdin.
-public struct GuardianRequest: Codable, Sendable {
-    public let jsonrpc: String  // "2.0"
-    public let id: Int
-    public let method: String   // "process_message" or "process_hook"
-    public let params: [String: AnyCodable]
-}
-
-/// JSON-RPC response from Guardian process via stdout.
-public struct GuardianResponse: Codable, Sendable {
-    public let jsonrpc: String
-    public let id: Int
-    public let result: GuardianResult
-}
-
-public struct GuardianResult: Codable, Sendable {
+/// A notification action emitted by the Guardian on stdout.
+public struct GuardianAction: Codable, Sendable {
     public let action: String  // "send" or "suppress"
     public let notification: CodoMessage?  // present when action == "send"
     public let reason: String?             // present when action == "suppress"
@@ -133,12 +115,31 @@ public struct GuardianResult: Codable, Sendable {
 /// Protocol for Guardian communication, enabling testability.
 public protocol GuardianProvider: Sendable {
     var isAlive: Bool { get }
-    func send(hookEvent rawJSON: Data) async throws
-    func send(message: CodoMessage) async throws
-    func start() throws
+
+    /// Send raw JSON line to Guardian stdin. Fire-and-forget — does not wait for response.
+    func send(line: Data) async
+
+    /// Start the Guardian process. Pass config via environment variables.
+    func start(config: [String: String]) throws
+
+    /// Stop the Guardian process (SIGTERM).
     func stop()
 }
 ```
+
+**No `AnyCodable`, no `GuardianConfig` struct in Swift.** Configuration is passed to the Guardian as environment variables:
+
+```swift
+// In GuardianProcess.start():
+process.environment = [
+    "CODO_API_KEY": apiKey,       // from KeychainService
+    "CODO_BASE_URL": baseURL,     // from SettingsStore
+    "CODO_MODEL": model,          // from SettingsStore
+    "CODO_CONTEXT_LIMIT": "\(contextLimit)",
+]
+```
+
+This avoids introducing any generic JSON types into Swift. The daemon's Swift type system only models what it actually inspects: `CodoMessage`, `RoutedMessage`, and `GuardianAction`.
 
 #### `GuardianProcess`
 
@@ -146,20 +147,41 @@ public protocol GuardianProvider: Sendable {
 // Sources/CodoCore/GuardianProcess.swift
 
 /// Manages the Guardian child process lifecycle.
-/// Communicates via stdin (daemon→guardian) and stdout (guardian→daemon).
+///
+/// Communication model:
+/// - Daemon writes JSON lines to stdin (fire-and-forget, never blocks)
+/// - A background thread reads stdout lines and decodes GuardianAction
+/// - When action == "send", it posts the notification via NotificationService
+/// - All stdin writes are serialized through a DispatchQueue
+/// - All stdout reads happen on a dedicated Thread (same pattern as SocketServer accept loop)
 public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     private var process: Process?
     private var stdinPipe: Pipe?
     private var stdoutPipe: Pipe?
-    private var requestId: Int = 0
+    private let writeQueue = DispatchQueue(label: "codo.guardian.stdin")
     private let notificationService: NotificationService
     private let guardianPath: String  // path to guardian/main.ts
-    private let config: GuardianConfig
     private var restartCount: Int = 0
     private let maxRestarts = 3
 
-    // stdout reader pumps responses and calls NotificationService
-    // when action == "send"
+    /// send(line:) writes raw JSON + newline to stdin.
+    /// Serialized via writeQueue. Never blocks the caller.
+    public func send(line: Data) async {
+        writeQueue.async { [weak self] in
+            guard let pipe = self?.stdinPipe else { return }
+            var data = line
+            data.append(UInt8(ascii: "\n"))
+            pipe.fileHandleForWriting.write(data)
+        }
+    }
+
+    /// Background stdout reader (runs on dedicated thread).
+    /// Decodes each line as GuardianAction and dispatches to NotificationService.
+    private func readStdoutLoop() {
+        guard let handle = stdoutPipe?.fileHandleForReading else { return }
+        // Read line-by-line, decode GuardianAction, post notification
+        // This runs on a dedicated thread, so blocking reads are fine
+    }
 }
 ```
 
@@ -181,14 +203,20 @@ public enum KeychainService {
 
 #### `SettingsStore`
 
+**Layer separation**: `CodoCore` contains a plain `struct GuardianSettings` with no UI dependencies. The app target (`Sources/Codo/`) wraps it in an `ObservableObject` view model for the settings window. This keeps `CodoCore` free of Combine/observation imports.
+
 ```swift
 // Sources/CodoCore/SettingsStore.swift
 
-/// UserDefaults-backed settings for Guardian configuration.
-public final class SettingsStore: ObservableObject, Sendable {
-    public static let shared = SettingsStore()
+/// Pure data model for Guardian settings. No UI dependencies.
+/// Reads/writes UserDefaults, but has no observation/binding support.
+public struct GuardianSettings {
+    private let defaults: UserDefaults
 
-    // Keys
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
     private enum Key: String {
         case guardianEnabled  = "guardianEnabled"
         case baseURL          = "guardianBaseURL"
@@ -196,10 +224,63 @@ public final class SettingsStore: ObservableObject, Sendable {
         case contextLimit     = "guardianContextLimit"
     }
 
-    public var guardianEnabled: Bool    // default: false
-    public var baseURL: String          // default: "https://api.openai.com/v1"
-    public var model: String            // default: "gpt-4o-mini"
-    public var contextLimit: Int        // default: 160000
+    public var guardianEnabled: Bool {
+        get { defaults.bool(forKey: Key.guardianEnabled.rawValue) }
+        set { defaults.set(newValue, forKey: Key.guardianEnabled.rawValue) }
+    }
+
+    public var baseURL: String {
+        get { defaults.string(forKey: Key.baseURL.rawValue) ?? "https://api.openai.com/v1" }
+        set { defaults.set(newValue, forKey: Key.baseURL.rawValue) }
+    }
+
+    public var model: String {
+        get { defaults.string(forKey: Key.model.rawValue) ?? "gpt-4o-mini" }
+        set { defaults.set(newValue, forKey: Key.model.rawValue) }
+    }
+
+    public var contextLimit: Int {
+        get {
+            let v = defaults.integer(forKey: Key.contextLimit.rawValue)
+            return v > 0 ? v : 160_000
+        }
+        set { defaults.set(newValue, forKey: Key.contextLimit.rawValue) }
+    }
+
+    /// Serialize to environment variables for Guardian child process.
+    public func toEnvironment(apiKey: String) -> [String: String] {
+        [
+            "CODO_API_KEY": apiKey,
+            "CODO_BASE_URL": baseURL,
+            "CODO_MODEL": model,
+            "CODO_CONTEXT_LIMIT": "\(contextLimit)",
+        ]
+    }
+}
+```
+
+```swift
+// Sources/Codo/SettingsViewModel.swift (app target only)
+
+import CodoCore
+import Combine
+
+/// Observable wrapper for SettingsWindow binding. Lives in app target, not CodoCore.
+final class SettingsViewModel: ObservableObject {
+    private var settings: GuardianSettings
+
+    @Published var guardianEnabled: Bool { didSet { settings.guardianEnabled = guardianEnabled } }
+    @Published var baseURL: String { didSet { settings.baseURL = baseURL } }
+    @Published var model: String { didSet { settings.model = model } }
+    @Published var contextLimit: Int { didSet { settings.contextLimit = contextLimit } }
+
+    init(settings: GuardianSettings = GuardianSettings()) {
+        self.settings = settings
+        self.guardianEnabled = settings.guardianEnabled
+        self.baseURL = settings.baseURL
+        self.model = settings.model
+        self.contextLimit = settings.contextLimit
+    }
 }
 ```
 
@@ -248,7 +329,7 @@ export type HookEventName =
 export interface HookEvent {
   _hook: HookEventName;
   session_id: string;
-  cwd: string;
+  cwd?: string;                // optional — absent in SessionEnd
   transcript_path?: string;
   hook_event_name: string;
   [key: string]: unknown;  // event-specific fields
@@ -284,7 +365,7 @@ export interface BufferedEvent {
   timestamp: number;
   hookType: HookEventName;
   sessionId: string;
-  cwd: string;
+  cwd?: string;             // optional — absent in SessionEnd
   summary: string;    // terse one-line summary for LLM context
   raw: Record<string, unknown>;  // full payload
 }
@@ -358,25 +439,102 @@ export function fallbackNotification(
 
 ## SocketServer Refactor: Raw Handler
 
-The current `SocketServer` decodes JSON into `CodoMessage` internally. For the discriminated union to work, the server must hand **raw bytes** to the handler so `MessageRouter` can inspect `_hook` first.
+The current `SocketServer` decodes JSON into `CodoMessage` internally (`handleClient()` at line 171 calls `JSONDecoder().decode(CodoMessage.self, ...)`). For the discriminated union to work, the server must hand **raw bytes** to the handler so `MessageRouter` can inspect `_hook` first.
 
 ### Before
 
 ```swift
 public typealias MessageHandler = @Sendable (CodoMessage) -> CodoResponse
-// SocketServer decodes JSON → CodoMessage → calls handler
+// SocketServer: read bytes → decode CodoMessage → validate → handler(message)
 ```
 
 ### After
 
 ```swift
 public typealias RawMessageHandler = @Sendable (Data) -> CodoResponse
-// SocketServer passes raw Data → handler routes via MessageRouter
+// SocketServer: read bytes → handler(rawBytes)
+// Handler is now responsible for decoding and validation
 ```
 
-The `MessageHandler` typedef is preserved as a convenience alias for callers who don't need raw routing (e.g., `CodoTestServer`). A new `init(socketPath:rawHandler:)` initializer accepts `RawMessageHandler`.
+**This is not just adding a new initializer.** The core `handleClient()` method must be refactored:
 
-**Migration**: `AppDelegate` switches to `rawHandler` and uses `MessageRouter` internally. `CodoTestServer` continues using the existing `MessageHandler` convenience.
+1. Extract the "read bytes until newline" loop into a helper that returns `Data`
+2. Remove the internal `JSONDecoder().decode(CodoMessage.self, ...)` and `message.validate()` calls from `handleClient()`
+3. Pass raw `Data` to the stored handler
+4. The `MessageHandler` convenience init wraps the old handler by inserting the decode + validate logic that was previously in `handleClient()`
+
+```swift
+// New handleClient() — simplified
+private static func handleClient(socket: Int32, handler: RawMessageHandler) {
+    defer { Darwin.close(socket) }
+    // ... timeout setup ...
+    guard let data = readUntilNewline(socket: socket) else { return }
+    guard data.count <= maxPayloadSize else { return }
+    let response = handler(data)
+    sendResponse(response, to: socket)
+}
+
+// Legacy convenience init
+public convenience init(socketPath: String, handler: @escaping MessageHandler) {
+    self.init(socketPath: socketPath, rawHandler: { data in
+        do {
+            let message = try JSONDecoder().decode(CodoMessage.self, from: data)
+            if let err = message.validate() { return .error(err) }
+            return handler(message)
+        } catch {
+            return .error("invalid json")
+        }
+    })
+}
+```
+
+**Regression risk**: All 16 existing socket tests continue to use the `MessageHandler` convenience init, so they validate backward compatibility automatically. New tests specifically exercise the `RawMessageHandler` path.
+
+### AppDelegate Handler: Async Dispatch for Hooks
+
+The handler closure returned to `SocketServer` must be **synchronous** (it returns `CodoResponse`). The critical question is what happens on the hook path.
+
+**Answer**: The handler returns `.ok` immediately for both paths. Hook events are dispatched asynchronously via `Task.detached`:
+
+```swift
+// In AppDelegate.startDaemon():
+socketServer = SocketServer(socketPath: socketPath, rawHandler: { [weak self] data in
+    guard let self else { return .error("shutting down") }
+
+    let routed: RoutedMessage
+    do {
+        routed = try MessageRouter.route(data)
+    } catch {
+        return .error("invalid json")
+    }
+
+    switch routed {
+    case .notification(let message):
+        if let err = message.validate() { return .error(err) }
+        // Existing sync→async bridge for NotificationService
+        let semaphore = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var result: CodoResponse = .error("timeout")
+        Task.detached {
+            result = await self.notificationService.post(message: message)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+
+    case .hookEvent(_, let rawJSON):
+        // Fire-and-forget: respond ok immediately, process async
+        if let guardian = self.guardian, guardian.isAlive {
+            Task.detached { await guardian.send(line: rawJSON) }
+        } else {
+            // Guardian OFF or dead: deliver fallback notification async
+            Task.detached { await self.deliverFallback(rawJSON: rawJSON) }
+        }
+        return .ok  // ← CLI gets ok immediately, Guardian processes in background
+    }
+})
+```
+
+**This is the core latency contract from 02-ai-guardian.md**: hook events return `.ok` synchronously. The Guardian processes asynchronously. The CLI never waits for AI processing.
 
 ---
 
@@ -387,13 +545,13 @@ Each commit is independently testable. Tests are written **before or alongside**
 | # | Type | Message | Files Changed | Tests Added |
 |---|------|---------|---------------|-------------|
 | 1 | `docs` | `docs: add AI Guardian detailed design` | `docs/features/03-ai-guardian-detail.md`, `docs/features/README.md` | — |
-| 2 | `feat` | `feat: add HookEvent and MessageRouter` | `Sources/CodoCore/HookEvent.swift`, `Sources/CodoCore/MessageRouter.swift` | `Tests/CodoCoreTests/MessageRouterTests.swift` |
+| 2 | `feat` | `feat: add MessageRouter for discriminated union dispatch` | `Sources/CodoCore/MessageRouter.swift` | `Tests/CodoCoreTests/MessageRouterTests.swift` |
 | 3 | `refactor` | `refactor: add raw handler to SocketServer` | `Sources/CodoCore/SocketServer.swift` | `Tests/CodoCoreTests/SocketTests.swift` (update) |
 | 4 | `feat` | `feat: add --hook flag to CLI` | `cli/codo.ts` | `cli/codo.test.ts` (new hook tests) |
 | 5 | `test` | `test: add hook event integration tests` | `Sources/CodoTestServer/CodoTestServer.swift`, `scripts/integration-test.sh` | L3: hook event roundtrip |
-| 6 | `feat` | `feat: add KeychainService and SettingsStore` | `Sources/CodoCore/KeychainService.swift`, `Sources/CodoCore/SettingsStore.swift` | `Tests/CodoCoreTests/SettingsStoreTests.swift` |
+| 6 | `feat` | `feat: add KeychainService and GuardianSettings` | `Sources/CodoCore/KeychainService.swift`, `Sources/CodoCore/SettingsStore.swift` | `Tests/CodoCoreTests/SettingsStoreTests.swift` |
 | 7 | `feat` | `feat: add GuardianProtocol and GuardianProcess` | `Sources/CodoCore/GuardianProtocol.swift`, `Sources/CodoCore/GuardianProcess.swift` | `Tests/CodoCoreTests/GuardianProcessTests.swift` |
-| 8 | `feat` | `feat: add settings window UI` | `Sources/Codo/SettingsWindow.swift` | L4: manual visual check |
+| 8 | `feat` | `feat: add settings window UI` | `Sources/Codo/SettingsWindow.swift`, `Sources/Codo/SettingsViewModel.swift` | L4: manual visual check |
 | 9 | `refactor` | `refactor: wire MessageRouter and Guardian into AppDelegate` | `Sources/Codo/AppDelegate.swift` | `Tests/CodoCoreTests/MessageRouterTests.swift` (integration) |
 | 10 | `feat` | `feat: add Guardian state module` | `guardian/types.ts`, `guardian/state.ts` | `guardian/state.test.ts` |
 | 11 | `feat` | `feat: add event classifier` | `guardian/classifier.ts` | `guardian/classifier.test.ts` |
@@ -406,18 +564,15 @@ Each commit is independently testable. Tests are written **before or alongside**
 
 ### Commit Detail
 
-#### Commit 2: `feat: add HookEvent and MessageRouter`
+#### Commit 2: `feat: add MessageRouter for discriminated union dispatch`
 
-Create the discriminated union types and routing logic.
-
-**`Sources/CodoCore/HookEvent.swift`**:
-- `HookEvent` struct with `_hook` field
-- Minimal — daemon only reads `_hook` and forwards raw bytes
+Create the routing logic that peeks at raw JSON to determine message type.
 
 **`Sources/CodoCore/MessageRouter.swift`**:
 - `RoutedMessage` enum: `.notification(CodoMessage)` | `.hookEvent(hook:rawJSON:)`
 - `MessageRouter.route(_ data: Data)` — peek JSON for `_hook`, branch accordingly
-- `MessageRouterError` — `invalidJSON`, `missingTitle`
+- `MessageRouterError` — `invalidJSON`
+- No `HookEvent` struct — hook events stay as raw `Data` bytes
 
 **Tests** (`Tests/CodoCoreTests/MessageRouterTests.swift`):
 | Test | Input | Expected |
@@ -433,13 +588,21 @@ Create the discriminated union types and routing logic.
 
 #### Commit 3: `refactor: add raw handler to SocketServer`
 
-**`Sources/CodoCore/SocketServer.swift`**:
-- Add `RawMessageHandler = @Sendable (Data) -> CodoResponse`
-- Add `init(socketPath:rawHandler:)` — stores `rawHandler`
-- Existing `init(socketPath:handler:)` wraps the `MessageHandler` in a `RawMessageHandler` that decodes internally (backward compat)
-- `handleClient()` now passes raw `Data` to the stored handler (either raw or wrapped)
+**This is a non-trivial refactor of the core read/decode loop**, not just a new init.
 
-**Tests**: Update existing `SocketTests.swift` to verify both init paths work. Add:
+**`Sources/CodoCore/SocketServer.swift`**:
+- Add `RawMessageHandler = @Sendable (Data) -> CodoResponse` typedef
+- **Refactor `handleClient()`**: extract byte-reading into a helper method, remove the internal `JSONDecoder.decode(CodoMessage.self, ...)` and `message.validate()` calls. The handler now receives raw `Data`.
+- Add `init(socketPath:rawHandler:)` — stores `rawHandler` directly
+- **Preserve `init(socketPath:handler:)`** as a convenience that wraps `MessageHandler` in a `RawMessageHandler` (inserts the decode + validate logic that was removed from `handleClient`)
+- `CodoTestServer` continues using the `MessageHandler` convenience, so all existing L3 tests are unaffected
+
+**Key refactor steps**:
+1. Extract `readUntilNewline(socket:) -> Data?` from `handleClient()`
+2. `handleClient()` calls `readUntilNewline()`, then passes raw `Data` to `rawHandler`
+3. Convenience init injects decode + validate into the `rawHandler` wrapper
+
+**Tests**: All 16 existing socket/integration tests continue to pass (they use `MessageHandler` convenience init → backward compat). New tests:
 | Test | Scenario | Expected |
 |------|----------|----------|
 | raw handler receives data | send JSON bytes | raw handler called with Data |
@@ -471,10 +634,10 @@ Create the discriminated union types and routing logic.
 
 **`Sources/CodoTestServer/CodoTestServer.swift`**:
 - Switch from `MessageHandler` to `RawMessageHandler`
-- Use `MessageRouter.route()` to decode
-- Log both `CodoMessage` and `HookEvent` to `messages.log`
-- For `HookEvent`: log `{"_hook":"stop","session_id":"...","cwd":"..."}` (raw payload)
-- For `CodoMessage`: log as before
+- Use `MessageRouter.route()` to decode incoming bytes
+- For `.notification(CodoMessage)`: log JSON as before, return `.ok` (or `.error` for "fail-me")
+- For `.hookEvent(_, rawJSON)`: log raw JSON bytes to `messages.log`, return `.ok`
+- This means the test server can now receive both CodoMessage and hook events on the same socket
 
 **`scripts/integration-test.sh`** — new section `--- Hook events ---`:
 | Test | Scenario | Expected |
@@ -485,37 +648,40 @@ Create the discriminated union types and routing logic.
 | hook preserves all fields | stdin with `session_id`, `cwd`, `tool_name` etc. | all fields in server log |
 | existing CodoMessage unaffected | same old tests | all still pass |
 
-#### Commit 6: `feat: add KeychainService and SettingsStore`
+#### Commit 6: `feat: add KeychainService and GuardianSettings`
 
 **`Sources/CodoCore/KeychainService.swift`**:
 - `readAPIKey()`, `writeAPIKey(_:)`, `deleteAPIKey()` using Security.framework
 - Uses `kSecClassGenericPassword` with service `"ai.hexly.codo.01"` and account `"guardian-api-key"`
 
 **`Sources/CodoCore/SettingsStore.swift`**:
-- UserDefaults wrapper with `guardianEnabled`, `baseURL`, `model`, `contextLimit`
-- `toGuardianConfig() -> [String: Any]` for serializing to Guardian process env
+- `GuardianSettings` struct (plain data, no UI dependencies) with UserDefaults read/write
+- Properties: `guardianEnabled`, `baseURL`, `model`, `contextLimit`
+- `toEnvironment(apiKey:) -> [String: String]` for passing config to Guardian child process via env vars
 
 **Tests** (`Tests/CodoCoreTests/SettingsStoreTests.swift`):
 | Test | Scenario | Expected |
 |------|----------|----------|
-| default values | fresh store | enabled=false, baseURL=openai, model=gpt-4o-mini, contextLimit=160000 |
+| default values | fresh GuardianSettings | enabled=false, baseURL=openai, model=gpt-4o-mini, contextLimit=160000 |
 | read/write guardianEnabled | toggle on/off | persists and reads back |
 | read/write baseURL | custom URL | persists |
 | read/write model | custom model | persists |
-| toGuardianConfig | all settings | dict with all keys |
+| toEnvironment | all settings + apiKey | dict with CODO_API_KEY, CODO_BASE_URL, CODO_MODEL, CODO_CONTEXT_LIMIT |
 
 **Note**: `KeychainService` unit tests are difficult because they require a real Keychain. Tests use a mock wrapper or skip Keychain in CI — tested manually in L4.
 
 #### Commit 7: `feat: add GuardianProtocol and GuardianProcess`
 
 **`Sources/CodoCore/GuardianProtocol.swift`**:
-- `GuardianProvider` protocol (see data structures above)
-- JSON-RPC request/response types
-- `MockGuardianProvider` for testing
+- `GuardianProvider` protocol: `isAlive`, `send(line:)` (fire-and-forget), `start(config:)`, `stop()`
+- `GuardianAction` struct: `action` ("send"/"suppress"), `notification?`, `reason?`
+- `MockGuardianProvider` for testing (records sent lines, simulates crash/restart)
 
 **`Sources/CodoCore/GuardianProcess.swift`**:
 - `GuardianProcess` — spawns `bun guardian/main.ts` as child process
-- Stdin pipe for sending requests, stdout pipe for reading responses
+- Stdin pipe for writing JSON lines (serialized via `DispatchQueue`)
+- Stdout reader on dedicated `Thread` — decodes `GuardianAction` lines, calls `NotificationService.post()` for "send" actions
+- Config passed via environment variables (no `GuardianConfig` Swift struct)
 - Restart logic (max 3, then disable)
 - SIGTERM on stop
 
@@ -538,8 +704,13 @@ Create the discriminated union types and routing logic.
 - NSSecureTextField for API Key (reads/writes via KeychainService)
 - NSSwitch for Guardian Enabled
 - NSTextField (number) for Context Limit
-- Save button commits to SettingsStore + Keychain
+- Save button commits to `GuardianSettings` + Keychain
 - Cancel button dismisses
+
+**`Sources/Codo/SettingsViewModel.swift`**:
+- `SettingsViewModel: ObservableObject` wrapping `GuardianSettings`
+- `@Published` properties for two-way binding in SettingsWindow
+- Lives in app target to keep CodoCore free of Combine imports
 
 No automated tests — UI is L4 manual verification.
 
@@ -548,22 +719,25 @@ No automated tests — UI is L4 manual verification.
 **`Sources/Codo/AppDelegate.swift`**:
 - Replace `SocketServer(handler:)` with `SocketServer(rawHandler:)`
 - Raw handler calls `MessageRouter.route()`
-- `.notification(msg)` → existing `NotificationService` path
-- `.hookEvent(hook, rawJSON)` → check `SettingsStore.guardianEnabled`:
-  - ON: forward to `GuardianProcess`
-  - OFF: use `fallbackNotification()` and deliver raw
+- `.notification(msg)` → existing sync→async bridge to `NotificationService` (unchanged)
+- `.hookEvent(hook, rawJSON)` → **returns `.ok` immediately**, then:
+  - Guardian alive: `Task.detached { await guardian.send(line: rawJSON) }` (fire-and-forget)
+  - Guardian dead/OFF: `Task.detached { await self.deliverFallback(rawJSON: rawJSON) }` (fire-and-forget)
+  - This is the core latency contract: hook events never block the CLI
 - Menu: add "AI Guardian" toggle item, "Settings..." item
 - On toggle: spawn or kill Guardian process
 - On startup: if `guardianEnabled` && API key present → spawn Guardian
+- Add `deliverFallback(rawJSON:)` method: peek `_hook` field, use `fallbackNotification()` logic (hardcoded in Swift, matching the table from 02-ai-guardian.md), deliver via `NotificationService`
 
 **Tests**: Update `MessageRouterTests.swift` with:
 | Test | Scenario | Expected |
 |------|----------|----------|
-| AppDelegate routes CodoMessage | send `{"title":"T"}` | NotificationService receives it |
-| AppDelegate routes HookEvent, guardian ON | send `{"_hook":"stop",...}` | GuardianProvider receives it |
-| AppDelegate routes HookEvent, guardian OFF | send `{"_hook":"stop",...}` | fallback notification delivered |
+| route + handler CodoMessage | send `{"title":"T"}` via raw handler | NotificationService receives it |
+| route + handler HookEvent, guardian ON | send `{"_hook":"stop",...}` via raw handler | MockGuardianProvider receives line |
+| route + handler HookEvent, guardian OFF | send `{"_hook":"stop",...}` via raw handler | fallback notification delivered |
+| hook path returns ok immediately | send hook event | handler returns `.ok` before Guardian processes |
 
-These are tested via mock providers wired into the router, not real AppDelegate.
+These test the routing logic using mock providers, not real AppDelegate or process spawn.
 
 #### Commits 10-14: Guardian TypeScript Modules
 
@@ -672,11 +846,11 @@ Each module is a self-contained unit with its own test file. All tests run via `
 
 | File | New Tests | Count |
 |------|-----------|-------|
-| `Tests/CodoCoreTests/MessageRouterTests.swift` | Route CodoMessage, route HookEvent, invalid JSON, missing title, preserve raw bytes | ~8 |
-| `Tests/CodoCoreTests/SocketTests.swift` | Raw handler init, raw handler receives data, legacy handler compat | ~3 |
+| `Tests/CodoCoreTests/MessageRouterTests.swift` | Route CodoMessage, route hook event, invalid JSON, preserve raw bytes, handler integration with mock providers | ~10 |
+| `Tests/CodoCoreTests/SocketTests.swift` | Raw handler refactor: readUntilNewline, raw handler receives data, legacy handler compat, hook event through raw handler | ~4 |
 | `Tests/CodoCoreTests/SettingsStoreTests.swift` | Default values, read/write each setting, toGuardianConfig | ~5 |
-| `Tests/CodoCoreTests/GuardianProcessTests.swift` | Mock provider: send message, send hook, isAlive, stop, restart exceeded | ~5 |
-| **Subtotal** | | **~21 new** |
+| `Tests/CodoCoreTests/GuardianProcessTests.swift` | Mock provider: send line, isAlive, stop, restart exceeded, stdout reader mock | ~5 |
+| **Subtotal** | | **~24 new** |
 
 **TypeScript CLI** (`cd cli && bun test`): Existing 60 tests + new tests.
 
@@ -697,10 +871,10 @@ Each module is a self-contained unit with its own test file. All tests run via `
 | **Subtotal** | | **~60 new** |
 
 **Estimated totals after Guardian**:
-- Swift: ~67 tests (46 + 21)
+- Swift: ~70 tests (46 + 24)
 - TS CLI: ~69 tests (60 + 9)
 - TS Guardian: ~60 tests
-- **Total L1: ~196 tests**
+- **Total L1: ~199 tests**
 
 ### L2 — Lint
 
