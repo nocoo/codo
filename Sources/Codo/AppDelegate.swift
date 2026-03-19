@@ -11,6 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var socketServer: SocketServer?
     private var notificationService: NotificationService?
 
+    // Guardian
+    private var guardian: GuardianProcess?
+    private let guardianSettings = GuardianSettings()
+    private var settingsWindow: SettingsWindowController?
+    private var guardianToggleItem: NSMenuItem?
+
     private let socketDir = "\(NSHomeDirectory())/.codo"
     private var socketPath: String { "\(socketDir)/codo.sock" }
 
@@ -21,9 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         setupStatusItem()
         setupMenu()
         startDaemon()
+        spawnGuardianIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        guardian?.stop()
         socketServer?.stop()
         try? FileManager.default.removeItem(atPath: socketPath)
     }
@@ -35,12 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             withLength: NSStatusItem.squareLength
         )
         if let button = statusItem.button {
-            // Load template image from bundle Resources
             if let img = Bundle.main.image(forResource: "menubar") {
                 img.isTemplate = true
                 button.image = img
             } else {
-                // Fallback to SF Symbol if bundle image not found
                 button.image = NSImage(
                     systemSymbolName: "bell",
                     accessibilityDescription: "Codo"
@@ -62,7 +68,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
         versionItem.isEnabled = false
         menu.addItem(versionItem)
+        menu.addItem(NSMenuItem.separator())
 
+        let toggleItem = NSMenuItem(
+            title: "AI Guardian",
+            action: #selector(toggleGuardian(_:)),
+            keyEquivalent: ""
+        )
+        toggleItem.target = self
+        toggleItem.state = guardianSettings.guardianEnabled ? .on : .off
+        menu.addItem(toggleItem)
+        guardianToggleItem = toggleItem
+
+        let settingsItem = NSMenuItem(
+            title: "Settings...",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
 
         let loginItem = NSMenuItem(
@@ -73,7 +97,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         loginItem.target = self
         loginItem.state = isLoginItemEnabled ? .on : .off
         menu.addItem(loginItem)
-
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(
@@ -112,6 +135,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    // MARK: - Guardian Lifecycle
+
+    @objc private func toggleGuardian(_ sender: NSMenuItem) {
+        let newState = !guardianSettings.guardianEnabled
+        guardianSettings.guardianEnabled = newState
+        sender.state = newState ? .on : .off
+
+        if newState {
+            spawnGuardianIfNeeded()
+        } else {
+            guardian?.stop()
+            guardian = nil
+        }
+    }
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindowController()
+        }
+        settingsWindow?.showWindow()
+    }
+
+    private func spawnGuardianIfNeeded() {
+        guard guardianSettings.guardianEnabled,
+              let apiKey = KeychainService.readAPIKey(),
+              !apiKey.isEmpty,
+              let path = resolveGuardianPath(),
+              let service = notificationService else { return }
+
+        let proc = GuardianProcess(
+            notificationService: service,
+            guardianPath: path
+        )
+        do {
+            try proc.start(config: guardianSettings.toEnvironment(apiKey: apiKey))
+            guardian = proc
+            logger.info("Guardian process started")
+        } catch {
+            logger.error("Failed to start Guardian: \(error)")
+        }
+    }
+
+    private func resolveGuardianPath() -> String? {
+        // 1. Bundle Resources/guardian/main.ts
+        if let bundlePath = Bundle.main.resourcePath {
+            let path = "\(bundlePath)/guardian/main.ts"
+            if FileManager.default.fileExists(atPath: path) { return path }
+        }
+        // 2. Development: derive from executable path
+        if let execURL = Bundle.main.executableURL {
+            let projectDir = execURL
+                .deletingLastPathComponent() // MacOS
+                .deletingLastPathComponent() // Contents
+                .deletingLastPathComponent() // Codo.app
+                .deletingLastPathComponent() // release
+                .deletingLastPathComponent() // .build
+            let devPath = projectDir
+                .appendingPathComponent("guardian")
+                .appendingPathComponent("main.ts").path
+            if FileManager.default.fileExists(atPath: devPath) { return devPath }
+        }
+        return nil
+    }
+
     // MARK: - Daemon
 
     private func startDaemon() {
@@ -120,32 +207,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         notificationService = NotificationService(provider: provider)
         #endif
 
-        // Request notification permission on startup
         if let service = notificationService {
-            Task {
-                _ = await service.requestPermission()
-            }
+            Task { _ = await service.requestPermission() }
         }
 
-        socketServer = SocketServer(socketPath: socketPath) { [weak self] message in
-            guard let self, let service = self.notificationService else {
-                return .error("notifications unavailable (no app bundle)")
+        socketServer = SocketServer(socketPath: socketPath, rawHandler: { [weak self] data in
+            guard let self else { return .error("shutting down") }
+
+            let routed: RoutedMessage
+            do {
+                routed = try MessageRouter.route(data)
+            } catch {
+                return .error("invalid json")
             }
 
-            // Bridge sync handler to async NotificationService.
-            // Use Task.detached to avoid inheriting MainActor context,
-            // which would deadlock with the semaphore.
-            let semaphore = DispatchSemaphore(value: 0)
-            nonisolated(unsafe) var result: CodoResponse = .error("timeout")
-
-            Task.detached {
-                result = await service.post(message: message)
-                semaphore.signal()
+            switch routed {
+            case .notification(let message):
+                return self.handleNotification(message)
+            case .hookEvent(_, let rawJSON):
+                self.dispatchHookEvent(rawJSON: rawJSON)
+                return .ok
             }
-
-            semaphore.wait()
-            return result
-        }
+        })
 
         do {
             try socketServer?.start()
@@ -156,9 +239,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    private func handleNotification(_ message: CodoMessage) -> CodoResponse {
+        guard let service = notificationService else {
+            return .error("notifications unavailable (no app bundle)")
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var result: CodoResponse = .error("timeout")
+        Task.detached {
+            result = await service.post(message: message)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+
+    private func dispatchHookEvent(rawJSON: Data) {
+        if let guardian, guardian.isAlive {
+            Task.detached { await guardian.send(line: rawJSON) }
+        } else {
+            Task.detached { [weak self] in
+                await self?.deliverFallback(rawJSON: rawJSON)
+            }
+        }
+    }
+
+    private func deliverFallback(rawJSON: Data) async {
+        guard let service = notificationService,
+              let message = FallbackNotification.build(from: rawJSON) else {
+            return
+        }
+        _ = await service.post(message: message)
+    }
+
     // MARK: - UNUserNotificationCenterDelegate
 
-    /// Always show banner + sound even when app is "foreground" (menubar apps count).
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
