@@ -1,78 +1,53 @@
 import Foundation
-import Security
 
-/// Reads and writes the API key from macOS Keychain.
+/// Reads and writes the API key from ~/.codo/api-key file.
 public enum KeychainService {
-    private static let service = "ai.hexly.codo.02"
-    private static let account = "guardian-api-key"
+    private static var keyFilePath: String {
+        "\(NSHomeDirectory())/.codo/api-key"
+    }
 
     public static func readAPIKey() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess, let data = result as? Data else {
+        guard let data = FileManager.default.contents(atPath: keyFilePath),
+              let key = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !key.isEmpty else {
             return nil
         }
-
-        return String(data: data, encoding: .utf8)
+        return key
     }
 
     public static func writeAPIKey(_ key: String) throws {
-        // Delete existing key first
-        try? deleteAPIKey()
+        let dir = (keyFilePath as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(
+            atPath: dir, withIntermediateDirectories: true)
 
         guard let data = key.data(using: .utf8) else {
             throw KeychainError.encodingFailed
         }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.writeFailed(status: status)
-        }
+        FileManager.default.createFile(atPath: keyFilePath, contents: data, attributes: [
+            .posixPermissions: 0o600
+        ])
     }
 
     public static func deleteAPIKey() throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.deleteFailed(status: status)
-        }
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: keyFilePath) else { return }
+        try manager.removeItem(atPath: keyFilePath)
     }
 }
 
 public enum KeychainError: Error, CustomStringConvertible {
     case encodingFailed
-    case writeFailed(status: OSStatus)
-    case deleteFailed(status: OSStatus)
+    case writeFailed(status: Int)
+    case deleteFailed(status: Int)
 
     public var description: String {
         switch self {
         case .encodingFailed:
-            return "keychain: failed to encode API key"
+            return "api-key: failed to encode"
         case .writeFailed(let status):
-            return "keychain: write failed (status \(status))"
+            return "api-key: write failed (status \(status))"
         case .deleteFailed(let status):
-            return "keychain: delete failed (status \(status))"
+            return "api-key: delete failed (status \(status))"
         }
     }
 }

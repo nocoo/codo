@@ -4,7 +4,7 @@ import os
 import ServiceManagement
 import UserNotifications
 
-private let logger = Logger(subsystem: "ai.hexly.codo.02", category: "app")
+private let logger = Logger(subsystem: "ai.hexly.codo.03", category: "app")
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
@@ -23,10 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - App Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        UNUserNotificationCenter.current().delegate = self
-        EditMenuSetup.install()
         setupStatusItem()
         setupMenu()
+        UNUserNotificationCenter.current().delegate = self
+        EditMenuSetup.install()
         startDaemon()
         spawnGuardianIfNeeded()
 
@@ -48,19 +48,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(
-            withLength: NSStatusItem.squareLength
+            withLength: NSStatusItem.variableLength
         )
+        fputs("setupStatusItem: button=\(statusItem.button != nil) "
+            + "visible=\(statusItem.isVisible)\n", stderr)
+
         if let button = statusItem.button {
+            // Try plain text first to rule out image issues
+            button.title = "Codo"
             if let img = Bundle.main.image(forResource: "menubar") {
                 img.isTemplate = true
+                img.size = NSSize(width: 18, height: 18)
                 button.image = img
-            } else {
-                button.image = NSImage(
-                    systemSymbolName: "bell",
-                    accessibilityDescription: "Codo"
-                )
-                button.image?.isTemplate = true
+                button.imagePosition = .imageLeading
             }
+            fputs("setupStatusItem: title=\(button.title) "
+                + "image=\(button.image != nil)\n", stderr)
         }
     }
 
