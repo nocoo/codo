@@ -10,6 +10,9 @@ import { extractCommand } from "./types";
 import type { StateStore } from "./state";
 import { serializeForPrompt } from "./state";
 import { fallbackNotification } from "./fallback";
+import { createLogger } from "./logger";
+
+const log = createLogger("llm");
 
 const LLM_TIMEOUT_MS = 30_000;
 
@@ -253,11 +256,17 @@ function createOpenAILLMClient(
       state: StateStore,
     ): Promise<GuardianResult> {
       try {
+        log.debug("openai.req", "sending request", {
+          model: config.model,
+          hook: event._hook,
+        });
+
         const controller = new AbortController();
         const timeout = setTimeout(
           () => controller.abort(),
           LLM_TIMEOUT_MS,
         );
+        const t0 = performance.now();
 
         const response = await openai.chat.completions.create(
           {
@@ -273,17 +282,39 @@ function createOpenAILLMClient(
         );
 
         clearTimeout(timeout);
+        const elapsed = Math.round(performance.now() - t0);
 
-        const toolCalls = response.choices[0]?.message?.tool_calls;
+        const choice = response.choices[0];
+        const toolCalls = choice?.message?.tool_calls;
+        log.info("openai.res", "response received", {
+          ms: elapsed,
+          finish_reason: choice?.finish_reason ?? "unknown",
+          tool_calls: toolCalls?.length ?? 0,
+          usage_prompt: response.usage?.prompt_tokens,
+          usage_completion: response.usage?.completion_tokens,
+        });
+
         if (toolCalls && toolCalls.length > 0) {
-          return parseOpenAIToolCall(toolCalls[0]);
+          const tc = toolCalls[0];
+          log.debug("openai.tool", "tool call parsed", {
+            name: tc.function.name,
+            args: tc.function.arguments.slice(0, 200),
+          });
+          return parseOpenAIToolCall(tc);
         }
 
+        log.warn("openai.notool", "no tool call in response", {
+          finish_reason: choice?.finish_reason ?? "unknown",
+        });
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }
           : { action: "suppress", reason: "no tool call from LLM" };
       } catch (error) {
+        log.error("openai.catch", "request failed", {
+          error: error instanceof Error ? error.name : "unknown",
+          message: error instanceof Error ? error.message : String(error),
+        });
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }
@@ -313,11 +344,17 @@ function createAnthropicLLMClient(
       state: StateStore,
     ): Promise<GuardianResult> {
       try {
+        log.debug("anthropic.req", "sending request", {
+          model: config.model,
+          hook: event._hook,
+        });
+
         const controller = new AbortController();
         const timeout = setTimeout(
           () => controller.abort(),
           LLM_TIMEOUT_MS,
         );
+        const t0 = performance.now();
 
         const response = await anthropic.messages.create(
           {
@@ -334,10 +371,15 @@ function createAnthropicLLMClient(
         );
 
         clearTimeout(timeout);
+        const elapsed = Math.round(performance.now() - t0);
 
-        process.stderr.write(
-          `guardian: LLM response stop_reason=${response.stop_reason} content_types=${response.content.map((b) => b.type).join(",")}\n`,
-        );
+        log.info("anthropic.res", "response received", {
+          ms: elapsed,
+          stop_reason: response.stop_reason,
+          content_types: response.content.map((b) => b.type).join(","),
+          usage_input: response.usage?.input_tokens,
+          usage_output: response.usage?.output_tokens,
+        });
 
         const toolUse = response.content.find(
           (block): block is Anthropic.ToolUseBlock =>
@@ -345,21 +387,25 @@ function createAnthropicLLMClient(
         );
 
         if (toolUse) {
-          process.stderr.write(
-            `guardian: tool_use name=${toolUse.name} input=${JSON.stringify(toolUse.input)}\n`,
-          );
+          log.debug("anthropic.tool", "tool use parsed", {
+            name: toolUse.name,
+            args: JSON.stringify(toolUse.input).slice(0, 200),
+          });
           return parseAnthropicToolUse(toolUse);
         }
 
-        process.stderr.write("guardian: no tool_use block found, falling back\n");
+        log.warn("anthropic.notool", "no tool_use block found, falling back", {
+          stop_reason: response.stop_reason,
+        });
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }
           : { action: "suppress", reason: "no tool use from LLM" };
       } catch (error) {
-        process.stderr.write(
-          `guardian: Anthropic LLM catch: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}\n`,
-        );
+        log.error("anthropic.catch", "request failed", {
+          error: error instanceof Error ? error.name : "unknown",
+          message: error instanceof Error ? error.message : String(error),
+        });
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }
