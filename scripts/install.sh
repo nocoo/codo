@@ -46,7 +46,7 @@ chmod 755 "$HOOK_DEST"
 echo "✓ Hook: $HOOK_DEST"
 
 # Symlink CLI to PATH
-if [ -d "/usr/local/bin" ]; then
+if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
     # Create wrapper script that invokes bun
     cat > "$CLI_LINK" <<'WRAPPER'
 #!/bin/bash
@@ -55,7 +55,7 @@ WRAPPER
     chmod 755 "$CLI_LINK"
     echo "✓ Symlink: $CLI_LINK"
 else
-    echo "⚠ /usr/local/bin not found, skipping CLI symlink"
+    echo "⚠ /usr/local/bin not found or not writable, skipping CLI symlink"
     echo "  Add alias: alias codo='bun $INSTALL_DIR/codo.ts'"
 fi
 
