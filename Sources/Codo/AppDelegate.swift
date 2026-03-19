@@ -29,6 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         setupMenu()
         startDaemon()
         spawnGuardianIfNeeded()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(settingsDidSave),
+            name: SettingsWindowController.settingsDidSave,
+            object: nil
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -151,6 +158,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    @objc private func settingsDidSave() {
+        // Sync menu toggle state
+        guardianToggleItem?.state = guardianSettings.guardianEnabled ? .on : .off
+
+        // Stop existing Guardian and restart with new config
+        guardian?.stop()
+        guardian = nil
+        spawnGuardianIfNeeded()
+    }
+
     @objc private func openSettings() {
         if settingsWindow == nil {
             settingsWindow = SettingsWindowController()
@@ -162,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard guardianSettings.guardianEnabled,
               let apiKey = KeychainService.readAPIKey(),
               !apiKey.isEmpty,
-              let guardianPath = resolveGuardianPath(),
+              let guardianPath = GuardianPathResolver.resolve(),
               let bunPath = GuardianProcess.resolveBunPath(),
               let service = notificationService else { return }
 
@@ -183,28 +200,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } catch {
             logger.error("Failed to start Guardian: \(error)")
         }
-    }
-
-    private func resolveGuardianPath() -> String? {
-        // 1. Bundle Resources/guardian/main.ts
-        if let bundlePath = Bundle.main.resourcePath {
-            let path = "\(bundlePath)/guardian/main.ts"
-            if FileManager.default.fileExists(atPath: path) { return path }
-        }
-        // 2. Development: derive from executable path
-        if let execURL = Bundle.main.executableURL {
-            let projectDir = execURL
-                .deletingLastPathComponent() // MacOS
-                .deletingLastPathComponent() // Contents
-                .deletingLastPathComponent() // Codo.app
-                .deletingLastPathComponent() // release
-                .deletingLastPathComponent() // .build
-            let devPath = projectDir
-                .appendingPathComponent("guardian")
-                .appendingPathComponent("main.ts").path
-            if FileManager.default.fileExists(atPath: devPath) { return devPath }
-        }
-        return nil
     }
 
     // MARK: - Daemon

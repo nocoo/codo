@@ -254,10 +254,14 @@ final class SettingsWindowController: NSWindowController {
 
     // MARK: - Actions
 
+    /// Posted after settings are persisted so AppDelegate can restart Guardian.
+    static let settingsDidSave = Notification.Name("CodoSettingsDidSave")
+
     @objc private func saveAction() {
         syncToViewModel()
         do {
             try viewModel.save()
+            NotificationCenter.default.post(name: Self.settingsDidSave, object: nil)
             close()
         } catch {
             let alert = NSAlert()
