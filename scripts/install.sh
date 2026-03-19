@@ -12,6 +12,9 @@ INSTALL_APP="$HOME/Applications/$APP_NAME.app"
 CLI_SOURCE="$PROJECT_DIR/cli/codo.ts"
 CLI_DEST="$INSTALL_DIR/codo.ts"
 CLI_LINK="/usr/local/bin/codo"
+HOOK_SOURCE="$PROJECT_DIR/hooks/claude-hook.sh"
+HOOK_DIR="$INSTALL_DIR/hooks"
+HOOK_DEST="$HOOK_DIR/claude-hook.sh"
 
 # Ensure app is built
 if [ ! -d "$APP_BUNDLE" ]; then
@@ -36,6 +39,12 @@ cp "$CLI_SOURCE" "$CLI_DEST"
 chmod 700 "$CLI_DEST"
 echo "✓ CLI: $CLI_DEST"
 
+# Copy hook script
+mkdir -p "$HOOK_DIR"
+cp "$HOOK_SOURCE" "$HOOK_DEST"
+chmod 755 "$HOOK_DEST"
+echo "✓ Hook: $HOOK_DEST"
+
 # Symlink CLI to PATH
 if [ -d "/usr/local/bin" ]; then
     # Create wrapper script that invokes bun
@@ -54,3 +63,5 @@ echo ""
 echo "=== Done ==="
 echo "1. Start daemon: open $INSTALL_APP"
 echo "2. Test: codo \"Hello\" \"World\""
+echo "3. Claude Code hooks: add to ~/.claude/settings.json:"
+echo "   { \"hooks\": [{ \"type\": \"command\", \"command\": \"$HOOK_DEST\" }] }"
