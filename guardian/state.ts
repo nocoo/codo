@@ -2,6 +2,9 @@ import { realpathSync } from "node:fs";
 import type { HookEvent, HookEventName } from "./types";
 import { extractCommand } from "./types";
 import { classifyEvent } from "./classifier";
+import { createLogger } from "./logger";
+
+const log = createLogger("state");
 
 export interface ProjectState {
   cwd: string;
@@ -114,7 +117,10 @@ export function updateState(store: StateStore, event: HookEvent): void {
   const { tier } = classifyEvent(event);
 
   // Noise events: no state change at all
-  if (tier === "noise") return;
+  if (tier === "noise") {
+    log.debug("updateState", "noise early return", { hook: event._hook });
+    return;
+  }
 
   // Buffer the event (contextual and important)
   const buffered: BufferedEvent = {
@@ -130,6 +136,12 @@ export function updateState(store: StateStore, event: HookEvent): void {
     store.events.splice(0, store.events.length - MAX_EVENTS);
   }
 
+  log.debug("updateState", "event buffered", {
+    hook: event._hook,
+    buffer_size: String(store.events.length),
+    summary: buffered.summary.slice(0, 80),
+  });
+
   // Update project state based on hook type
   if (!cwd) return; // session-end may lack cwd
 
@@ -141,10 +153,15 @@ export function updateState(store: StateStore, event: HookEvent): void {
       project.sessionId = event.session_id;
       project.model = (event.model as string) ?? null;
       project.sessionActive = true;
+      log.info("updateState", "session started", {
+        cwd: project.cwd,
+        model: project.model ?? "unknown",
+      });
       break;
 
     case "session-end":
       project.sessionActive = false;
+      log.info("updateState", "session ended", { cwd: project.cwd });
       break;
 
     case "stop": {
@@ -178,11 +195,19 @@ export function updateState(store: StateStore, event: HookEvent): void {
           event.tool_response as string,
           200,
         );
+        log.debug("updateState", "lastStatus updated", {
+          hook: event._hook,
+          status: (project.lastStatus ?? "").slice(0, 60),
+        });
       }
       break;
 
     case "post-tool-use-failure":
       project.lastStatus = truncate(event.error as string, 200);
+      log.debug("updateState", "lastStatus updated (failure)", {
+        hook: event._hook,
+        status: (project.lastStatus ?? "").slice(0, 60),
+      });
       break;
   }
 }
