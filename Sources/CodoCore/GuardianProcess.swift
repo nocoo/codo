@@ -19,6 +19,11 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     private var restartCount: Int = 0
     private let maxRestarts = 3
     private var disabled = false
+    private var intentionalStop = false
+    private var lastConfig: [String: String]?
+
+    /// Called on main queue when Guardian gives up after maxRestarts.
+    public var onDisabled: (() -> Void)?
 
     public init(
         notificationService: NotificationService,
@@ -89,6 +94,9 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     public func start(config: [String: String]) throws {
         guard !disabled else { return }
 
+        intentionalStop = false
+        lastConfig = config
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bunPath)
         proc.arguments = [guardianPath]
@@ -120,8 +128,9 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
         thread.start()
     }
 
-    /// Stop the Guardian process (SIGTERM).
+    /// Stop the Guardian process (SIGTERM). Intentional stop — no auto-restart.
     public func stop() {
+        intentionalStop = true
         if let proc = process, proc.isRunning {
             proc.terminate()
         }
@@ -133,14 +142,36 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     // MARK: - Private
 
     /// Handle unexpected Guardian process termination.
+    /// Attempts auto-restart up to maxRestarts times with a 1s delay.
     private func handleTermination() {
-        guard !disabled else { return }
+        // If stop() was called intentionally, don't auto-restart
+        guard !intentionalStop, !disabled else { return }
+
         restartCount += 1
         if restartCount > maxRestarts {
             disabled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.onDisabled?()
+            }
             return
         }
-        // Auto-restart is deferred to AppDelegate which checks isAlive
+
+        // Clear old pipes before restart
+        process = nil
+        stdinPipe = nil
+        stdoutPipe = nil
+
+        // Restart after a short delay to avoid tight crash loops
+        guard let config = lastConfig else { return }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + 1.0
+        ) { [weak self] in
+            do {
+                try self?.start(config: config)
+            } catch {
+                // Restart failed — will try again on next termination
+            }
+        }
     }
 
     /// Background stdout reader. Decodes each line as GuardianAction.

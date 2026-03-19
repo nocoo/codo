@@ -170,6 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             guardianPath: guardianPath,
             bunPath: bunPath
         )
+        proc.onDisabled = { [weak self] in
+            self?.guardianToggleItem?.state = .off
+            self?.guardianSettings.guardianEnabled = false
+            logger.warning("Guardian disabled after repeated crashes")
+        }
         do {
             try proc.start(config: guardianSettings.toEnvironment(apiKey: apiKey))
             guardian = proc
