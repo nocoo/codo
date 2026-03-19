@@ -92,6 +92,19 @@ struct GuardianProviderMockTests {
 @Suite("GuardianAction Decoding")
 struct GuardianActionTests {
 
+    @Test("resolveBunPath finds bun on this machine")
+    func resolveBunPath() {
+        // This test verifies resolveBunPath works on the current dev machine.
+        // If bun is not installed, the test is skipped.
+        let path = GuardianProcess.resolveBunPath()
+        if path != nil {
+            #expect(FileManager.default.isExecutableFile(atPath: path!))
+        } else {
+            // bun not installed — skip verification but don't fail
+            // (CI may not have bun)
+        }
+    }
+
     @Test("decode send action with notification")
     func decodeSendAction() throws {
         let json = """

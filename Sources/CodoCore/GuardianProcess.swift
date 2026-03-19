@@ -23,7 +23,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     public init(
         notificationService: NotificationService,
         guardianPath: String,
-        bunPath: String = "/usr/local/bin/bun"
+        bunPath: String
     ) {
         self.notificationService = notificationService
         self.guardianPath = guardianPath
@@ -32,6 +32,47 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
     public var isAlive: Bool {
         process?.isRunning ?? false
+    }
+
+    /// Resolve the bun executable path by checking common locations
+    /// and falling back to `which bun`.
+    public static func resolveBunPath() -> String? {
+        // Check common paths in priority order
+        let candidates = [
+            "/opt/homebrew/bin/bun",    // Apple Silicon Homebrew
+            "/usr/local/bin/bun",       // Intel Homebrew / manual install
+            "\(NSHomeDirectory())/.bun/bin/bun" // bun self-install
+        ]
+
+        let fileManager = FileManager.default
+        for path in candidates where fileManager.isExecutableFile(atPath: path) {
+            return path
+        }
+
+        // Fall back to `which bun` for PATH-based installs
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        proc.arguments = ["bun"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let path = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let path, fileManager.isExecutableFile(atPath: path) {
+                    return path
+                }
+            }
+        } catch {
+            // which failed, no bun found
+        }
+
+        return nil
     }
 
     /// Send raw JSON line to Guardian stdin. Serialized via writeQueue.

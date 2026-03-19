@@ -161,12 +161,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard guardianSettings.guardianEnabled,
               let apiKey = KeychainService.readAPIKey(),
               !apiKey.isEmpty,
-              let path = resolveGuardianPath(),
+              let guardianPath = resolveGuardianPath(),
+              let bunPath = GuardianProcess.resolveBunPath(),
               let service = notificationService else { return }
 
         let proc = GuardianProcess(
             notificationService: service,
-            guardianPath: path
+            guardianPath: guardianPath,
+            bunPath: bunPath
         )
         do {
             try proc.start(config: guardianSettings.toEnvironment(apiKey: apiKey))
