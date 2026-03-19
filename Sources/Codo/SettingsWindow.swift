@@ -3,19 +3,27 @@ import CodoCore
 
 /// Programmatic settings window for Guardian configuration.
 /// Uses NSWindow with a vertical stack of labeled form fields.
+/// Provider selection auto-fills base URL, model, and SDK type from the registry.
 final class SettingsWindowController: NSWindowController {
     private let viewModel: SettingsViewModel
     private var guardianSwitch: NSSwitch!
+    private var providerPopup: NSPopUpButton!
     private var apiKeyField: NSSecureTextField!
     private var baseURLField: NSTextField!
-    private var modelField: NSTextField!
+    private var modelPopup: NSPopUpButton!
+    private var modelCustomField: NSTextField!
+    private var sdkTypePopup: NSPopUpButton!
     private var contextLimitField: NSTextField!
+
+    // Rows that hide/show based on provider
+    private var baseURLRow: NSStackView!
+    private var sdkTypeRow: NSStackView!
 
     init(viewModel: SettingsViewModel = SettingsViewModel()) {
         self.viewModel = viewModel
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 400),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -58,20 +66,44 @@ final class SettingsWindowController: NSWindowController {
         guardianSwitch.controlSize = .regular
         stack.addArrangedSubview(makeRow(label: "AI Guardian", control: guardianSwitch))
 
+        // Provider
+        providerPopup = NSPopUpButton()
+        providerPopup.removeAllItems()
+        for info in GuardianSettings.builtinProviders {
+            providerPopup.addItem(withTitle: info.label)
+            providerPopup.lastItem?.representedObject = info.id
+        }
+        providerPopup.addItem(withTitle: "Custom")
+        providerPopup.lastItem?.representedObject = "custom"
+        providerPopup.target = self
+        providerPopup.action = #selector(providerChanged(_:))
+        stack.addArrangedSubview(makeRow(label: "Provider", control: providerPopup))
+
         // API Key
         apiKeyField = NSSecureTextField()
         apiKeyField.placeholderString = "sk-..."
         stack.addArrangedSubview(makeRow(label: "API Key", control: apiKeyField))
 
-        // Base URL
+        // Base URL (custom only)
         baseURLField = NSTextField()
         baseURLField.placeholderString = "https://api.openai.com/v1"
-        stack.addArrangedSubview(makeRow(label: "Base URL", control: baseURLField))
+        baseURLRow = makeRow(label: "Base URL", control: baseURLField)
+        stack.addArrangedSubview(baseURLRow)
 
-        // Model
-        modelField = NSTextField()
-        modelField.placeholderString = "gpt-4o-mini"
-        stack.addArrangedSubview(makeRow(label: "Model", control: modelField))
+        // Model (popup for built-in, text field for custom)
+        modelPopup = NSPopUpButton()
+        modelPopup.removeAllItems()
+        stack.addArrangedSubview(makeRow(label: "Model", control: modelPopup))
+
+        // SDK Type (custom only)
+        sdkTypePopup = NSPopUpButton()
+        sdkTypePopup.removeAllItems()
+        sdkTypePopup.addItem(withTitle: "OpenAI")
+        sdkTypePopup.lastItem?.representedObject = "openai"
+        sdkTypePopup.addItem(withTitle: "Anthropic")
+        sdkTypePopup.lastItem?.representedObject = "anthropic"
+        sdkTypeRow = makeRow(label: "SDK Type", control: sdkTypePopup)
+        stack.addArrangedSubview(sdkTypeRow)
 
         // Context Limit
         contextLimitField = NSTextField()
@@ -122,8 +154,70 @@ final class SettingsWindowController: NSWindowController {
                 textField.widthAnchor.constraint(greaterThanOrEqualToConstant: 260)
             ])
         }
+        if let popup = control as? NSPopUpButton {
+            popup.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 260)
+            ])
+        }
 
         return row
+    }
+
+    // MARK: - Provider Linking
+
+    @objc private func providerChanged(_ sender: NSPopUpButton) {
+        guard let providerId = sender.selectedItem?.representedObject as? String else { return }
+        viewModel.provider = providerId
+        viewModel.applyProviderDefaults()
+        updateProviderUI()
+    }
+
+    private func updateProviderUI() {
+        let isCustom = viewModel.isCustomProvider
+        baseURLRow.isHidden = !isCustom
+        sdkTypeRow.isHidden = !isCustom
+
+        // Rebuild model popup
+        modelPopup.removeAllItems()
+        if let info = viewModel.currentProviderInfo {
+            for modelName in info.models {
+                modelPopup.addItem(withTitle: modelName)
+            }
+            modelPopup.addItem(withTitle: "Custom model...")
+            // Select current model
+            if let idx = info.models.firstIndex(of: viewModel.model) {
+                modelPopup.selectItem(at: idx)
+            } else {
+                // Custom model — show as editable title
+                modelPopup.selectItem(at: info.models.count)
+            }
+        } else {
+            // Custom provider — show only editable text
+            modelPopup.addItem(withTitle: viewModel.model.isEmpty ? "gpt-4o-mini" : viewModel.model)
+        }
+
+        // Sync fields
+        baseURLField.stringValue = viewModel.baseURL
+
+        // Select SDK type
+        selectPopup(sdkTypePopup, value: viewModel.sdkType)
+    }
+
+    private func selectPopup(_ popup: NSPopUpButton, value: String) {
+        for (idx, item) in popup.itemArray.enumerated()
+            where item.representedObject as? String == value {
+            popup.selectItem(at: idx)
+            return
+        }
+    }
+
+    private func selectProviderPopup() {
+        for (idx, item) in providerPopup.itemArray.enumerated()
+            where item.representedObject as? String == viewModel.provider {
+            providerPopup.selectItem(at: idx)
+            return
+        }
     }
 
     // MARK: - Data Binding
@@ -133,16 +227,29 @@ final class SettingsWindowController: NSWindowController {
         guardianSwitch.state = viewModel.guardianEnabled ? .on : .off
         apiKeyField.stringValue = viewModel.apiKey
         baseURLField.stringValue = viewModel.baseURL
-        modelField.stringValue = viewModel.model
         contextLimitField.integerValue = viewModel.contextLimit
+
+        selectProviderPopup()
+        updateProviderUI()
     }
 
     private func syncToViewModel() {
         viewModel.guardianEnabled = guardianSwitch.state == .on
         viewModel.apiKey = apiKeyField.stringValue
-        viewModel.baseURL = baseURLField.stringValue
-        viewModel.model = modelField.stringValue
         viewModel.contextLimit = max(1, contextLimitField.integerValue)
+
+        // Provider is already set via providerChanged
+        if viewModel.isCustomProvider {
+            viewModel.baseURL = baseURLField.stringValue
+            viewModel.sdkType = sdkTypePopup.selectedItem?.representedObject as? String ?? "openai"
+            viewModel.model = modelPopup.titleOfSelectedItem ?? ""
+        } else {
+            // Model from popup
+            if let title = modelPopup.titleOfSelectedItem, title != "Custom model..." {
+                viewModel.model = title
+            }
+            // baseURL and sdkType come from provider defaults (already set)
+        }
     }
 
     // MARK: - Actions
