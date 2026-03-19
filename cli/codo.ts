@@ -332,6 +332,17 @@ class DaemonError extends Error {
   }
 }
 
+/** Lightweight diagnostic log for --hook mode. Writes to stderr (captured by hooks.log). */
+function hookLog(level: string, msg: string, data?: Record<string, unknown>): void {
+  const parts = [`[codo-cli] ${level} ${msg}`];
+  if (data) {
+    for (const [k, v] of Object.entries(data)) {
+      parts.push(`${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
+    }
+  }
+  process.stderr.write(`${parts.join(" ")}\n`);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
@@ -374,22 +385,33 @@ async function main(): Promise<void> {
     const stdinText = await Bun.stdin.text();
     const hookResult = parseHook(hookType, stdinText);
     if ("error" in hookResult) {
+      hookLog("ERROR", "parse failed", { hook: hookType, error: hookResult.error });
       console.error(hookResult.error);
       process.exit(1);
     }
 
+    hookLog("DEBUG", "parsed", {
+      hook: hookType,
+      payload_bytes: String(stdinText.length),
+    });
+
     try {
+      hookLog("DEBUG", "connecting", { socket: SOCKET_PATH });
       const response = await sendToDaemon(hookResult.payload);
       if (!response.ok) {
+        hookLog("ERROR", "daemon rejected", { error: response.error ?? "unknown" });
         console.error(response.error || "unknown error");
         process.exit(1);
       }
+      hookLog("DEBUG", "sent ok", { hook: hookType });
       process.exit(0);
     } catch (err) {
       if (err instanceof DaemonError) {
+        hookLog("ERROR", "daemon error", { error: err.message, exit: String(err.exitCode) });
         console.error(err.message);
         process.exit(err.exitCode);
       }
+      hookLog("ERROR", "unexpected", { error: err instanceof Error ? err.message : "unknown" });
       console.error("unexpected error");
       process.exit(3);
     }
