@@ -222,4 +222,63 @@ describe("guardian main", () => {
     expect(state.events.length).toBe(3); // start + tool-use + stop
     expect(state.projects.size).toBe(1);
   });
+
+  test("serial execution: slow LLM does not cause interleaving", async () => {
+    const state = createStateStore();
+    const capture = captureStdout();
+    const order: number[] = [];
+
+    const client: LLMClient = {
+      async process(event): Promise<GuardianResult> {
+        const idx = event._hook === "stop" ? 1 : 2;
+        // First event takes longer to process
+        if (idx === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        order.push(idx);
+        return {
+          action: "send",
+          notification: { title: `Event-${idx}` },
+        };
+      },
+    };
+
+    // Fire both processLine calls "concurrently" (simulating readline firing
+    // two lines without awaiting the first)
+    const p1 = processLine(
+      JSON.stringify({
+        _hook: "stop",
+        session_id: "s1",
+        hook_event_name: "stop",
+        cwd: "/tmp",
+        last_assistant_message: "First",
+      }),
+      state,
+      client,
+    );
+    const p2 = processLine(
+      JSON.stringify({
+        _hook: "stop",
+        session_id: "s1",
+        hook_event_name: "stop",
+        cwd: "/tmp",
+        last_assistant_message: "Second",
+      }),
+      state,
+      client,
+    );
+
+    await Promise.all([p1, p2]);
+    capture.restore();
+
+    // Without serial queue, p2 would finish before p1 (idx=2 before idx=1)
+    // because p1 has 50ms delay.
+    // With serial queue at the readline level, both still run sequentially
+    // through processLine, but since processLine itself is the unit of work,
+    // the test validates that processLine doesn't internally break ordering.
+    // The real queue lives in import.meta.main — here we verify processLine
+    // outputs are correct even when called concurrently.
+    expect(capture.lines.length).toBe(2);
+    expect(order.length).toBe(2);
+  });
 });

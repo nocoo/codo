@@ -108,13 +108,25 @@ if (import.meta.main) {
     terminal: false,
   });
 
-  rl.on("line", async (line: string) => {
+  // Serial queue: each line must fully complete before the next starts.
+  // readline `line` events fire without awaiting async handlers, so
+  // concurrent processLine() calls would interleave state mutations.
+  let queue: Promise<void> = Promise.resolve();
+
+  rl.on("line", (line: string) => {
     if (!line.trim()) return;
-    await processLine(line, state, llmClient);
+    queue = queue.then(() => processLine(line, state, llmClient)).catch(
+      (err) => {
+        process.stderr.write(
+          `guardian: unhandled error: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      },
+    );
   });
 
   rl.on("close", () => {
-    process.exit(0);
+    // Drain queue before exit
+    queue.then(() => process.exit(0));
   });
 
   process.stderr.write("guardian: started\n");
