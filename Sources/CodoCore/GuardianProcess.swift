@@ -142,7 +142,9 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     // MARK: - Private
 
     /// Handle unexpected Guardian process termination.
-    /// Attempts auto-restart up to maxRestarts times with a 1s delay.
+    /// Attempts auto-restart up to maxRestarts consecutive crashes.
+    /// The counter resets after a successful stdout decode (see readStdoutLoop),
+    /// so only rapid crash-loops trigger the circuit breaker.
     private func handleTermination() {
         // If stop() was called intentionally, don't auto-restart
         guard !intentionalStop, !disabled else { return }
@@ -196,6 +198,12 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
                 do {
                     let action = try decoder.decode(GuardianAction.self, from: Data(lineData))
+
+                    // Successful decode proves the process is healthy.
+                    // Reset the consecutive-crash counter so only rapid
+                    // crash-loops (no successful output) trigger the breaker.
+                    restartCount = 0
+
                     if action.action == "send", let notification = action.notification {
                         // Post notification asynchronously
                         Task {
