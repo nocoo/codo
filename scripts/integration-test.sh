@@ -244,6 +244,67 @@ fi
 
 rm -f /tmp/codo-integ-stderr.txt
 
+# --- Hook events ---
+echo ""
+echo "--- Hook events ---"
+
+# Test: --hook stop roundtrip → server log shows _hook: "stop"
+echo '{"session_id":"s1","cwd":"/tmp","last_assistant_message":"Done"}' \
+  | HOME="$FAKE_HOME" bun "$CLI" --hook stop 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"stop"'; then
+    pass "--hook stop roundtrip"
+else
+    fail "--hook stop roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: --hook notification roundtrip
+echo '{"session_id":"s1","cwd":"/tmp","title":"Perm","message":"Approve?","notification_type":"permission_prompt"}' \
+  | HOME="$FAKE_HOME" bun "$CLI" --hook notification 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"notification"'; then
+    pass "--hook notification roundtrip"
+else
+    fail "--hook notification roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: --hook post-tool-use roundtrip
+echo '{"session_id":"s1","cwd":"/tmp","tool_name":"Bash","command":"npm test"}' \
+  | HOME="$FAKE_HOME" bun "$CLI" --hook post-tool-use 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"tool_name":"Bash"'; then
+    pass "--hook post-tool-use roundtrip"
+else
+    fail "--hook post-tool-use roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: hook preserves all fields
+echo '{"session_id":"s1","cwd":"/tmp/proj","tool_name":"Bash","command":"npm test","custom_field":42}' \
+  | HOME="$FAKE_HOME" bun "$CLI" --hook post-tool-use 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"session_id":"s1"' \
+   && echo "$LAST" | grep -q '"cwd":"/tmp/proj"' \
+   && echo "$LAST" | grep -q '"custom_field":42'; then
+    pass "hook preserves all fields"
+else
+    fail "hook preserves all fields" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: existing CodoMessage still works after test server update
+STDOUT=$(HOME="$FAKE_HOME" bun "$CLI" "AfterHook" 2>/dev/null)
+EXIT=$?
+if [ "$EXIT" -eq 0 ] && [ -z "$STDOUT" ]; then
+    pass "existing CodoMessage unaffected"
+else
+    fail "existing CodoMessage unaffected" "exit=$EXIT stdout='$STDOUT'"
+fi
+
+rm -f /tmp/codo-integ-stderr.txt
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

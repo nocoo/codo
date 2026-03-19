@@ -3,8 +3,8 @@ import Foundation
 
 /// Minimal test server for L3 integration tests.
 /// Starts a SocketServer on the given path, prints READY to stderr, waits for SIGTERM.
-/// Message handler returns ok for all valid messages, except title "fail-me" which returns error.
-/// All received messages are logged as JSON lines to `messages.log` in the socket directory.
+/// Uses RawMessageHandler + MessageRouter to handle both CodoMessage and hook events.
+/// All received payloads are logged as JSON lines to `messages.log` in the socket directory.
 @main
 struct CodoTestServer {
     static func main() throws {
@@ -22,21 +22,38 @@ struct CodoTestServer {
         let logHandle = FileHandle(forWritingAtPath: logPath)!
         let logQueue = DispatchQueue(label: "codo.test-server.log")
 
-        let server = SocketServer(socketPath: socketPath) { message in
-            // Log received message as JSON line (serialized to avoid interleaving)
-            if let data = try? JSONEncoder().encode(message),
-               let line = String(data: data, encoding: .utf8) {
-                let entry = line + "\n"
-                logQueue.sync {
-                    logHandle.write(Data(entry.utf8))
-                }
-            }
+        let server = SocketServer(socketPath: socketPath, rawHandler: { data in
+            do {
+                let routed = try MessageRouter.route(data)
+                switch routed {
+                case .notification(let message):
+                    // Log the CodoMessage as JSON
+                    if let encoded = try? JSONEncoder().encode(message),
+                       let line = String(data: encoded, encoding: .utf8) {
+                        let entry = line + "\n"
+                        logQueue.sync {
+                            logHandle.write(Data(entry.utf8))
+                        }
+                    }
+                    if message.title == "fail-me" {
+                        return .error("test error")
+                    }
+                    return .ok
 
-            if message.title == "fail-me" {
-                return .error("test error")
+                case .hookEvent(_, let rawJSON):
+                    // Log the raw hook event JSON bytes as-is
+                    if let line = String(data: rawJSON, encoding: .utf8) {
+                        let entry = line + "\n"
+                        logQueue.sync {
+                            logHandle.write(Data(entry.utf8))
+                        }
+                    }
+                    return .ok
+                }
+            } catch {
+                return .error("invalid json")
             }
-            return .ok
-        }
+        })
 
         try server.start()
         fputs("READY\n", stderr)
