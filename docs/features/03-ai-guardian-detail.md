@@ -852,7 +852,7 @@ Each module is a self-contained unit with its own test file. All tests run via `
 |------|-----------|-------|
 | `Tests/CodoCoreTests/MessageRouterTests.swift` | Route CodoMessage, route hook event, invalid JSON, preserve raw bytes, handler integration with mock providers | ~10 |
 | `Tests/CodoCoreTests/SocketTests.swift` | Raw handler refactor: readUntilNewline, raw handler receives data, legacy handler compat, hook event through raw handler | ~4 |
-| `Tests/CodoCoreTests/GuardianSettingsTests.swift` | Default values, read/write each setting, toGuardianConfig | ~5 |
+| `Tests/CodoCoreTests/GuardianSettingsTests.swift` | Default values, read/write each setting, toEnvironment | ~5 |
 | `Tests/CodoCoreTests/GuardianProcessTests.swift` | Mock provider: send line, isAlive, stop, restart exceeded, stdout reader mock | ~5 |
 | **Subtotal** | | **~24 new** |
 
@@ -871,7 +871,7 @@ Each module is a self-contained unit with its own test file. All tests run via `
 | `guardian/classifier.test.ts` | Bash classification, event classification | ~18 |
 | `guardian/fallback.test.ts` | Fallback per hook type, truncation, suppression | ~9 |
 | `guardian/llm.test.ts` | Prompt assembly, tool defs, mock LLM process, timeout, error | ~11 |
-| `guardian/main.test.ts` | stdin/stdout, method dispatch, state accumulation | ~7 |
+| `guardian/main.test.ts` | stdin/stdout, event line dispatch, state accumulation | ~7 |
 | **Subtotal** | | **~60 new** |
 
 **Estimated totals after Guardian**:
