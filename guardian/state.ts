@@ -109,6 +109,7 @@ function summarizeEvent(event: HookEvent): string {
 
 function truncate(s: string | undefined | null, max: number): string {
   if (!s) return "";
+  if (typeof s !== "string") return String(s).slice(0, max);
   return s.length <= max ? s : `${s.slice(0, max)}...`;
 }
 
