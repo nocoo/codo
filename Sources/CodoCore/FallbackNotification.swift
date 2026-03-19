@@ -67,11 +67,32 @@ public enum FallbackNotification {
         }
     }
 
+    /// Extract the Bash command string from a PostToolUse event.
+    ///
+    /// Claude Code hook payloads vary:
+    /// - `command` may be a top-level string field
+    /// - `tool_input` may be an object like `{ "command": "npm test" }`
+    /// - `tool_input` may be a plain string (less common)
     private static func extractCommand(
         from fields: [String: Any]
     ) -> String? {
-        fields["command"] as? String
-            ?? fields["tool_input"] as? String
+        // Prefer top-level command string
+        if let command = fields["command"] as? String {
+            return command
+        }
+
+        // Extract from tool_input object (real Claude hook format)
+        if let toolInput = fields["tool_input"] as? [String: Any],
+           let command = toolInput["command"] as? String {
+            return command
+        }
+
+        // tool_input as plain string
+        if let toolInput = fields["tool_input"] as? String {
+            return toolInput
+        }
+
+        return nil
     }
 
     /// Check if a Bash command is "important" (test/build/git/deploy).

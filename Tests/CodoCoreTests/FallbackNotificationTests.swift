@@ -66,6 +66,57 @@ struct FallbackNotificationTests {
         #expect(result?.body == "42 tests passed")
     }
 
+    @Test func fallbackPostToolUseWithToolInputObject() throws {
+        // Real Claude hook format: tool_input is an object
+        let json: [String: Any] = [
+            "_hook": "post-tool-use",
+            "tool_name": "Bash",
+            "tool_input": ["command": "npm test", "timeout": 5000],
+            "tool_response": "42 tests passed"
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let result = FallbackNotification.build(from: data)
+        #expect(result?.title == "Bash result")
+        #expect(result?.body == "42 tests passed")
+    }
+
+    @Test func fallbackPostToolUseWithToolInputObjectNoise() throws {
+        let json: [String: Any] = [
+            "_hook": "post-tool-use",
+            "tool_name": "Bash",
+            "tool_input": ["command": "ls -la"],
+            "tool_response": "file1.ts"
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let result = FallbackNotification.build(from: data)
+        #expect(result == nil) // suppressed — not important
+    }
+
+    @Test func fallbackPostToolUseWithToolInputString() throws {
+        let json: [String: Any] = [
+            "_hook": "post-tool-use",
+            "tool_name": "Bash",
+            "tool_input": "swift build",
+            "tool_response": "Build complete"
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let result = FallbackNotification.build(from: data)
+        #expect(result?.title == "Bash result")
+        #expect(result?.body == "Build complete")
+    }
+
+    @Test func fallbackPostToolUseNoCommand() throws {
+        // tool_input object without command key
+        let json: [String: Any] = [
+            "_hook": "post-tool-use",
+            "tool_name": "Read",
+            "tool_input": ["file_path": "/tmp/test.ts"]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let result = FallbackNotification.build(from: data)
+        #expect(result == nil) // no command → suppressed
+    }
+
     @Test func fallbackPostToolUseNoise() throws {
         let json: [String: Any] = [
             "_hook": "post-tool-use",
