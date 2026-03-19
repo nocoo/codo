@@ -18,20 +18,28 @@ Claude Code hook
 codo CLI (TypeScript / Bun)
     │  codo "Build Done" "All tests passed"
     │  — or —
-    │  echo '{"title":"Build Done","body":"All tests passed"}' | codo
+    │  echo '{"_hook":"stop",...}' | codo --hook stop
     ▼
 Unix Domain Socket (~/.codo/codo.sock)
     │
     ▼
 Codo.app (Swift menubar daemon)
     │
-    ▼
-UNUserNotificationCenter → macOS system toast
+    ├─── CodoMessage (no _hook) ──► UNUserNotificationCenter → macOS toast
+    │
+    └─── Hook Event (_hook present) ──► Guardian Pipeline
+         │                                │
+         ├── Guardian ON ─► bun guardian/main.ts (stdin/stdout)
+         │                    │  classify → LLM → send/suppress
+         │                    ▼
+         │                  GuardianAction → UNUserNotificationCenter
+         │
+         └── Guardian OFF ─► FallbackNotification → UNUserNotificationCenter
 ```
 
 ## Architecture
 
-### Two Layers, Clear Boundary
+### Two Layers + Guardian, Clear Boundary
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -39,8 +47,12 @@ UNUserNotificationCenter → macOS system toast
 │                                                 │
 │  - NSStatusItem with custom template image       │
 │  - SocketServer listening on UDS                │
+│  - MessageRouter: CodoMessage vs Hook Event     │
 │  - NotificationService → UNUserNotificationCenter│
-│  - Right-click menu (version, login item, quit) │
+│  - GuardianProcess: spawns bun guardian/main.ts  │
+│  - Settings window (API key, model, base URL)   │
+│  - FallbackNotification (when Guardian is OFF)  │
+│  - Right-click menu (version, settings, quit)   │
 │  - Runs as .app bundle only                     │
 └──────────────────────┬──────────────────────────┘
                        │ UDS: ~/.codo/codo.sock
@@ -49,15 +61,29 @@ UNUserNotificationCenter → macOS system toast
 │                                                 │
 │  - Bun script, no build step                    │
 │  - Accepts args or stdin JSON                   │
+│  - --hook flag for Claude Code hook events      │
 │  - Connects to UDS, sends request, reads response│
 │  - Exit code reflects success/failure           │
 └─────────────────────────────────────────────────┘
+                       │ stdin/stdout pipes
+┌──────────────────────┴──────────────────────────┐
+│  Layer 3: Guardian (guardian/main.ts)            │
+│                                                 │
+│  - Spawned by daemon as child process           │
+│  - Reads hook events from stdin (JSON lines)    │
+│  - Event classifier (important/contextual/noise)│
+│  - Project state tracking (per cwd)             │
+│  - LLM client (OpenAI-compatible, tool_choice)  │
+│  - Writes GuardianAction to stdout (send/suppress)│
+│  - Fallback on LLM timeout/error                │
+└─────────────────────────────────────────────────┘
 ```
 
-**Why two layers?**
-- Swift side: pure daemon, no stdin/mode detection complexity
-- TS side: no compilation, easy to modify, natural for hook scripts
-- Clear IPC contract (JSON over UDS) — layers can evolve independently
+**Why this split?**
+- Swift side: daemon, notification delivery, Guardian process management
+- TS CLI side: no compilation, easy to modify, natural for hook scripts
+- Guardian side: LLM-powered intelligence, isolated process (crash-safe), easy to iterate
+- Clear IPC contracts — layers can evolve independently
 
 ### Repository Structure
 
@@ -68,9 +94,16 @@ codo/
 │   ├── CodoCore/                   ← Business logic, zero AppKit dependency
 │   │   ├── CodoMessage.swift       ← Message + Response types
 │   │   ├── SocketServer.swift      ← UDS listener
-│   │   └── NotificationService.swift ← UNUserNotificationCenter wrapper
+│   │   ├── NotificationService.swift ← UNUserNotificationCenter wrapper
+│   │   ├── MessageRouter.swift     ← Discriminated union dispatch
+│   │   ├── GuardianProcess.swift   ← Child process manager (spawn, restart, pipes)
+│   │   ├── GuardianSettings.swift  ← UserDefaults + Keychain persistence
+│   │   ├── KeychainService.swift   ← Keychain read/write
+│   │   └── FallbackNotification.swift ← Hook → CodoMessage when Guardian OFF
 │   ├── Codo/                       ← Thin app shell
-│   │   └── AppDelegate.swift       ← NSStatusItem, menu, wiring
+│   │   ├── AppDelegate.swift       ← NSStatusItem, menu, wiring
+│   │   ├── SettingsWindow.swift    ← Programmatic NSWindow for Guardian config
+│   │   └── SettingsViewModel.swift ← @Published bindings for settings UI
 │   └── CodoTestServer/             ← Minimal test server for L3 integration
 │       └── CodoTestServer.swift
 ├── Tests/
@@ -79,6 +112,16 @@ codo/
 │   ├── codo.ts                     ← Main script (Bun executable)
 │   ├── codo.test.ts                ← CLI tests (bun test)
 │   └── package.json                ← Metadata only (no deps needed)
+├── guardian/                       ← AI Guardian (TypeScript)
+│   ├── main.ts                     ← Entry point: stdin/stdout JSON lines
+│   ├── types.ts                    ← Shared types (HookEvent, GuardianAction, etc.)
+│   ├── classifier.ts              ← Event tier classification
+│   ├── state.ts                   ← Project state tracking + event buffer
+│   ├── llm.ts                     ← LLM client + prompt assembly
+│   ├── fallback.ts                ← Fallback notifications (no LLM)
+│   ├── *.test.ts                  ← Unit tests per module
+│   ├── package.json               ← Dependencies (openai)
+│   └── biome.json                 ← Linter config
 ├── Resources/
 │   ├── Info.plist                  ← App bundle metadata
 │   ├── AppIcon.icns                ← App icon (fallback)
@@ -125,6 +168,9 @@ Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no
 | Item | State | Notes |
 |------|-------|-------|
 | **Codo v0.1.0** | Disabled label | Version from `CodoInfo.version` |
+| ─── | Separator | |
+| **AI Guardian** | Checkbox | Toggle Guardian on/off (requires API key) |
+| **Settings...** | — | Opens `SettingsWindowController` |
 | ─── | Separator | |
 | **Launch at Login** | Checkbox (off) | `SMAppService.mainApp` toggle |
 | ─── | Separator | |
@@ -186,7 +232,13 @@ Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no
 ```
 Package.swift
 ├── CodoCore        (.target)          ← Business logic, zero AppKit
+│   ├── MessageRouter                   ← Discriminated union dispatch
+│   ├── GuardianProcess                 ← Child process manager
+│   ├── GuardianSettings + Keychain     ← Persistence
+│   └── FallbackNotification            ← Hook → CodoMessage fallback
 ├── Codo            (.executableTarget) ← App shell, depends on CodoCore
+│   ├── SettingsWindow                  ← NSWindow for Guardian config
+│   └── SettingsViewModel               ← @Published bindings
 ├── CodoTestServer  (.executableTarget) ← Test server for L3 integration
 └── CodoCoreTests   (.testTarget)      ← Tests, depends on CodoCore
 ```
@@ -208,6 +260,9 @@ codo "Deploying..." --template progress
 
 # Custom subtitle and thread grouping
 codo "PR Ready" --subtitle "Review" --thread pr-42
+
+# Hook events (Claude Code integration)
+echo '{"_hook":"stop","session_id":"s1","cwd":"/tmp","last_assistant_message":"Done"}' | codo --hook stop
 
 # Stdin JSON (advanced)
 echo '{"title":"Build Done","body":"Passed","subtitle":"✅ Success"}' | codo
@@ -326,4 +381,3 @@ interface CodoResponse {
 - Notification history / log viewer
 - Rich media in notifications
 - TCP/HTTP IPC
-- GUI preferences window

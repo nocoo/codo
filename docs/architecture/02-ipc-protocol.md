@@ -146,4 +146,46 @@ On daemon startup:
 # Permission denied
 → {"title":"Hello"}\n
 ← {"ok":false,"error":"notification permission denied"}\n
+
+# Hook event (Guardian pipeline)
+→ {"_hook":"stop","session_id":"s1","hook_event_name":"stop","cwd":"/tmp","last_assistant_message":"Done"}\n
+← {"ok":true}\n
+
+# Hook event (notification type)
+→ {"_hook":"notification","session_id":"s1","cwd":"/tmp","title":"Permission needed","message":"Approve Bash?"}\n
+← {"ok":true}\n
 ```
+
+## Discriminated Union: CodoMessage vs Hook Event
+
+The UDS transport carries two kinds of messages, distinguished by the presence of the `_hook` field:
+
+| Discriminant | Type | Description |
+|-------------|------|-------------|
+| No `_hook` field | **CodoMessage** | Direct notification request (title/body/subtitle/sound/threadId) |
+| Has `_hook` field | **Hook Event** | Claude Code hook payload, routed to Guardian pipeline |
+
+### Hook Event Format
+
+```json
+{
+  "_hook": "stop",
+  "session_id": "abc123",
+  "hook_event_name": "stop",
+  "cwd": "/Users/user/project",
+  "last_assistant_message": "Refactored auth module"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_hook` | `String` | ✅ | Hook type discriminant (`stop`, `notification`, `post-tool-use`, `session-start`, `session-end`) |
+| `session_id` | `String` | ✅ | Claude Code session identifier |
+| `hook_event_name` | `String` | ❌ | Hook event name (may differ from `_hook`) |
+| `cwd` | `String` | ❌ | Working directory of the session |
+| *(other fields)* | varies | ❌ | Hook-specific payload fields (preserved as raw JSON) |
+
+### Routing Behavior
+
+1. **CodoMessage** (no `_hook`): Validated → posted as notification immediately → `{"ok":true}`
+2. **Hook Event** (has `_hook`): Acknowledged immediately with `{"ok":true}` → dispatched asynchronously to Guardian pipeline (or fallback notification if Guardian is off)

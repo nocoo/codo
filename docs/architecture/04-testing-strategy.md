@@ -6,8 +6,8 @@
 
 | Layer | What | When | Tool |
 |-------|------|------|------|
-| **L1 — Unit Tests** | Swift: message codec, socket roundtrip, notification service. TS: arg parsing, JSON construction, template expansion | pre-commit | `swift test` + `bun test` |
-| **L2 — Lint** | Swift: SwiftLint strict. TS: Biome | pre-commit | `swiftlint` + `bunx biome check` |
+| **L1 — Unit Tests** | Swift: message codec, socket roundtrip, notification service, MessageRouter, Guardian. TS: arg parsing, JSON construction, template expansion, hook flags. Guardian: classifier, state, LLM, fallback, main | pre-commit | `swift test` + `bun test` (cli + guardian) |
+| **L2 — Lint** | Swift: SwiftLint strict. TS: Biome (cli + guardian) | pre-commit | `swiftlint` + `bunx biome check` |
 | **L3 — Integration** | Full socket roundtrip: TS CLI → UDS → Swift server → response | pre-push | Script: start server, run CLI, assert |
 | **L4 — E2E Checklist** | `.app` bundle: install, permission, toast display | Manual (pre-release) | Human |
 
@@ -78,6 +78,8 @@ File: `cli/codo.test.ts`, run with `bun test`.
 | --version | `["--version"]` | print version |
 | args + stdin | args=`["B"]`, stdin=`{"title":"A"}` | args win, title="B" |
 | empty stdin no args | stdin empty, no args | error/usage |
+| --hook flag | `["--hook", "stop"]` | hook mode |
+| --hook with title | `["Title", "--hook", "stop"]` | error: conflict |
 
 **Template expansion (applyTemplate)**:
 | Test | Input | Expected |
@@ -93,6 +95,60 @@ File: `cli/codo.test.ts`, run with `bun test`.
 | subtitle + threadId | `{"title":"T","subtitle":"S","threadId":"t"}` | fields set |
 | empty subtitle | `{"title":"T","subtitle":"  "}` | subtitle omitted |
 | template key ignored | `{"title":"T","template":"success"}` | no expansion |
+
+## L1 — TypeScript Guardian Unit Tests
+
+File: `guardian/*.test.ts`, run with `cd guardian && bun test`.
+
+**Classifier** (`classifier.test.ts`):
+| Test | Input | Expected |
+|------|-------|----------|
+| stop event | `{_hook:"stop"}` | important, triggers LLM |
+| notification event | `{_hook:"notification"}` | important, triggers LLM |
+| post-tool-use npm test | `{tool_name:"Bash", command:"npm test"}` | important |
+| post-tool-use ls | `{tool_name:"Bash", command:"ls"}` | contextual |
+| session-start | `{_hook:"session-start"}` | contextual, no LLM |
+| session-end | `{_hook:"session-end"}` | noise |
+| unknown hook | `{_hook:"unknown"}` | noise |
+
+**State** (`state.test.ts`):
+| Test | Input | Expected |
+|------|-------|----------|
+| create state store | — | empty projects, events, summary |
+| update stop | stop event | project updated with task |
+| update session-start | session-start | project created with model |
+| buffer max 50 | 51 events | oldest evicted |
+| stale project eviction | project >24h | removed |
+| serializeForPrompt | populated state | readable string |
+| generic stop message | "done" after real task | doesn't overwrite |
+
+**LLM** (`llm.test.ts`):
+| Test | Input | Expected |
+|------|-------|----------|
+| send tool call | mock OpenAI returns send | notification payload |
+| suppress tool call | mock returns suppress | reason string |
+| timeout fallback | mock delays >10s | fallback notification |
+| error fallback | mock throws | fallback notification |
+| system prompt | state with projects | includes project context |
+
+**Fallback** (`fallback.test.ts`):
+| Test | Input | Expected |
+|------|-------|----------|
+| stop event | hook stop | "Task Complete" notification |
+| notification event | hook notification | title from event |
+| post-tool-use important | Bash npm test | "Tool: npm test" |
+| post-tool-use noise | Bash ls | null (suppressed) |
+| session-start | — | "Session Started" |
+| session-end | — | null (suppressed) |
+
+**Main** (`main.test.ts`):
+| Test | Input | Expected |
+|------|-------|----------|
+| JSON line parsed | stop event JSON | LLM invoked, action output |
+| send action emits | LLM returns send | JSON line to stdout |
+| CodoMessage dispatch | `{title, body}` | passthrough as send action |
+| malformed JSON | bad input | error logged, no crash |
+| sequential events | 3 events | all processed, state accumulated |
 
 ## L2 — Lint
 
@@ -113,6 +169,11 @@ excluded:
 
 ```json
 // cli/biome.json
+{ "linter": { "rules": { "recommended": true } } }
+```
+
+```json
+// guardian/biome.json
 { "linter": { "rules": { "recommended": true } } }
 ```
 
@@ -138,6 +199,12 @@ Script-based: spin up a real Swift `CodoTestServer` on a temp socket, call from 
 | subtitle+threadId stdin | pipe JSON with new fields | server log shows fields |
 | --thread flag | send with thread flag | server log shows threadId |
 | --silent + template | silent overrides template sound | server log shows sound:"none" |
+| --hook stop | pipe stop hook JSON | exit 0, server receives raw JSON |
+| --hook notification | pipe notification hook | exit 0, server receives hook |
+| --hook post-tool-use | pipe tool use hook | exit 0, tool data in log |
+| --hook preserves fields | stdin with many fields | all fields in server log |
+| --hook unknown type | `--hook bogus` | exit 1, error message |
+| --hook with title arg | `"Title" --hook stop` | exit 1, conflict error |
 
 ## L4 — E2E Checklist
 
@@ -157,7 +224,7 @@ Script-based: spin up a real Swift `CodoTestServer` on a temp socket, call from 
 ### Daemon
 - [ ] `open /Applications/Codo.app` → bell icon in menubar
 - [ ] No Dock icon
-- [ ] Right-click: version, Launch at Login, Quit
+- [ ] Right-click: version, AI Guardian, Settings, Launch at Login, Quit
 - [ ] `~/.codo/codo.sock` exists (mode 0600)
 
 ### Permission
@@ -173,6 +240,31 @@ Script-based: spin up a real Swift `CodoTestServer` on a temp socket, call from 
 - [ ] `codo "Step 1" --template progress --thread task` → silent toast
 - [ ] `codo "Step 2" --template progress --thread task` → groups with above
 - [ ] Notification banner shows app icon (hummingbird)
+
+### Settings UI
+- [ ] Click "Settings..." → window opens
+- [ ] API Key field is masked (secure field)
+- [ ] Enter API key → save → re-open → key persists (Keychain)
+- [ ] Custom Base URL → save → persists
+- [ ] Model name → save → persists
+- [ ] Toggle Guardian ON → process spawns
+- [ ] Toggle Guardian OFF → process stops
+
+### Guardian ON (requires API key)
+- [ ] Send stop hook → AI-rewritten notification (not raw text)
+- [ ] Send notification hook → enriched context notification
+- [ ] 3 similar hooks rapidly → at least 1 suppressed (dedup)
+- [ ] Long message → concise notification (summarized)
+
+### Guardian OFF (no API key)
+- [ ] Stop hook → raw fallback: "Task Complete — Done"
+- [ ] Notification hook → raw fallback: "Title — Message"
+- [ ] session-end hook → no notification (suppressed)
+
+### Guardian Resilience
+- [ ] Kill Guardian → send hook → fallback notification + auto-restart
+- [ ] Kill Guardian 3 times → stays dead, menubar shows OFF
+- [ ] Restart daemon → Guardian auto-spawns if enabled + API key present
 
 ### Errors
 - [ ] `echo '{"bad' | codo` → exit 1
@@ -193,13 +285,15 @@ Script-based: spin up a real Swift `CodoTestServer` on a temp socket, call from 
 #!/bin/bash
 set -euo pipefail
 
-# L2: Lint
-swiftlint lint --strict --quiet
-cd cli && bunx biome check . && cd ..
-
 # L1: Unit tests
 swift test
 cd cli && bun test && cd ..
+cd guardian && bun test && cd ..
+
+# L2: Lint
+swiftlint lint --strict --quiet
+cd cli && bunx biome check . && cd ..
+cd guardian && bunx biome check . && cd ..
 ```
 
 ### pre-push
@@ -208,10 +302,15 @@ cd cli && bun test && cd ..
 #!/bin/bash
 set -euo pipefail
 
-# L1 + L2
-swiftlint lint --strict --quiet
+# L1: Unit tests
 swift test
-cd cli && bunx biome check . && bun test && cd ..
+cd cli && bun test && cd ..
+cd guardian && bun test && cd ..
+
+# L2: Lint
+swiftlint lint --strict --quiet
+cd cli && bunx biome check . && cd ..
+cd guardian && bunx biome check . && cd ..
 
 # L3: Integration
 ./scripts/integration-test.sh
@@ -222,3 +321,14 @@ cd cli && bunx biome check . && bun test && cd ..
 Target: **90%+ on CodoCore**, measured via `swift test --enable-code-coverage`.
 
 TS CLI: `bun test --coverage`, target 90%+.
+
+TS Guardian: `cd guardian && bun test --coverage`, target 90%+.
+
+### Current Test Counts
+
+| Module | Tests |
+|--------|-------|
+| Swift (CodoCore) | 89 |
+| TS CLI | 76 |
+| TS Guardian | 61 |
+| **Total L1** | **226** |
