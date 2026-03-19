@@ -1,4 +1,5 @@
 import type { HookEvent } from "./types";
+import { extractCommand } from "./types";
 
 export type EventTier = "important" | "contextual" | "noise";
 
@@ -70,8 +71,7 @@ export function classifyEvent(event: HookEvent): ClassifyResult {
       return { tier: "contextual", shouldTriggerLLM: false };
 
     case "post-tool-use": {
-      const command =
-        (event.command as string) ?? (event.tool_input as string) ?? "";
+      const command = extractCommand(event);
       const output = (event.tool_response as string) ?? "";
       const tier = classifyBashEvent(command, output);
       return {

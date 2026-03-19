@@ -5,6 +5,7 @@ import type {
   HookEvent,
   NotificationPayload,
 } from "./types";
+import { extractCommand } from "./types";
 import type { StateStore } from "./state";
 import { serializeForPrompt } from "./state";
 import { fallbackNotification } from "./fallback";
@@ -118,10 +119,11 @@ export function buildUserMessage(event: HookEvent): string {
       if (event.tool_name) {
         parts.push(`Tool: ${event.tool_name as string}`);
       }
-      if (event.command || event.tool_input) {
-        parts.push(
-          `Command: ${(event.command as string) ?? (event.tool_input as string)}`,
-        );
+      {
+        const cmd = extractCommand(event);
+        if (cmd) {
+          parts.push(`Command: ${cmd}`);
+        }
       }
       if (event.tool_response) {
         const response = event.tool_response as string;

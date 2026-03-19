@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import type { HookEvent, HookEventName } from "./types";
+import { extractCommand } from "./types";
 import { classifyEvent } from "./classifier";
 
 export interface ProjectState {
@@ -91,7 +92,7 @@ function summarizeEvent(event: HookEvent): string {
     case "notification":
       return `notification: ${event.title ?? "untitled"}`;
     case "post-tool-use":
-      return `tool: ${event.tool_name ?? "unknown"} — ${truncate(event.command as string ?? event.tool_input as string ?? "", 60)}`;
+      return `tool: ${event.tool_name ?? "unknown"} — ${truncate(extractCommand(event), 60)}`;
     case "post-tool-use-failure":
       return `tool-fail: ${event.tool_name ?? "unknown"} — ${truncate(event.error as string ?? "", 60)}`;
     case "session-start":

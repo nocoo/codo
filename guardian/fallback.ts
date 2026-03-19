@@ -1,4 +1,5 @@
 import type { HookEvent, NotificationPayload } from "./types";
+import { extractCommand } from "./types";
 import { classifyBashEvent } from "./classifier";
 
 /**
@@ -24,8 +25,7 @@ export function fallbackNotification(
     }
 
     case "post-tool-use": {
-      const command =
-        (event.command as string) ?? (event.tool_input as string) ?? "";
+      const command = extractCommand(event);
       const tier = classifyBashEvent(command, "");
       if (tier !== "important") return null;
 

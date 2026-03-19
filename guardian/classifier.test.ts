@@ -128,4 +128,32 @@ describe("classifyEvent", () => {
     expect(result.tier).toBe("contextual");
     expect(result.shouldTriggerLLM).toBe(false);
   });
+
+  test("PostToolUse with tool_input object → extracts command", () => {
+    const result = classifyEvent(
+      makeEvent({
+        _hook: "post-tool-use",
+        cwd: "/tmp",
+        tool_name: "Bash",
+        tool_input: { command: "npm test", timeout: 5000 },
+        tool_response: "42 passed",
+      }),
+    );
+    expect(result.tier).toBe("important");
+    expect(result.shouldTriggerLLM).toBe(true);
+  });
+
+  test("PostToolUse with tool_input object noise → contextual", () => {
+    const result = classifyEvent(
+      makeEvent({
+        _hook: "post-tool-use",
+        cwd: "/tmp",
+        tool_name: "Bash",
+        tool_input: { command: "ls -la" },
+        tool_response: "file1.ts",
+      }),
+    );
+    expect(result.tier).toBe("contextual");
+    expect(result.shouldTriggerLLM).toBe(false);
+  });
 });

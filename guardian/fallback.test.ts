@@ -82,6 +82,31 @@ describe("fallbackNotification", () => {
     expect(result).toBeNull();
   });
 
+  test("PostToolUse with tool_input object → extracts command", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "post-tool-use",
+        tool_name: "Bash",
+        tool_input: { command: "npm test", timeout: 5000 },
+        tool_response: "42 passed",
+      }),
+    );
+    expect(result?.title).toBe("Bash result");
+    expect(result?.body).toBe("42 passed");
+  });
+
+  test("PostToolUse with tool_input object noise → suppressed", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "post-tool-use",
+        tool_name: "Bash",
+        tool_input: { command: "ls -la" },
+        tool_response: "file1.ts",
+      }),
+    );
+    expect(result).toBeNull();
+  });
+
   test("PostToolUseFailure", () => {
     const result = fallbackNotification(
       makeEvent({
