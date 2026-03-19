@@ -5,8 +5,11 @@ public final class SocketServer: Sendable {
     /// Handler called for each valid message. Returns a CodoResponse.
     public typealias MessageHandler = @Sendable (CodoMessage) -> CodoResponse
 
+    /// Handler called with raw bytes from the client. Returns a CodoResponse.
+    public typealias RawMessageHandler = @Sendable (Data) -> CodoResponse
+
     private let socketPath: String
-    private let handler: MessageHandler
+    private let rawHandler: RawMessageHandler
     private nonisolated(unsafe) var serverSocket: Int32 = -1
     private nonisolated(unsafe) var running = false
 
@@ -16,9 +19,28 @@ public final class SocketServer: Sendable {
     /// Read/write timeout: 5 seconds
     private static let timeoutSeconds: Int = 5
 
+    /// Initialize with a raw handler that receives unparsed bytes.
+    /// Use the `rawHandler:` label explicitly — trailing closure syntax resolves to `handler:`.
+    @_disfavoredOverload
+    public init(socketPath: String, rawHandler: @escaping RawMessageHandler) {
+        self.socketPath = socketPath
+        self.rawHandler = rawHandler
+    }
+
+    /// Convenience initializer: wraps a MessageHandler with decode + validate logic.
     public init(socketPath: String, handler: @escaping MessageHandler) {
         self.socketPath = socketPath
-        self.handler = handler
+        self.rawHandler = { data in
+            do {
+                let message = try JSONDecoder().decode(CodoMessage.self, from: data)
+                if let validationError = message.validate() {
+                    return .error(validationError)
+                }
+                return handler(message)
+            } catch {
+                return .error("invalid json")
+            }
+        }
     }
 
     /// Start listening on the Unix Domain Socket.
@@ -123,20 +145,16 @@ public final class SocketServer: Sendable {
             }
 
             // Handle client on a dispatch queue to avoid blocking accept thread
-            let handler = self.handler
+            let rawHandler = self.rawHandler
             DispatchQueue.global(qos: .userInitiated).async {
-                Self.handleClient(socket: clientSocket, handler: handler)
+                Self.handleClient(socket: clientSocket, rawHandler: rawHandler)
             }
         }
     }
 
-    private static func handleClient(
-        socket clientSocket: Int32,
-        handler: MessageHandler
-    ) {
-        defer { Darwin.close(clientSocket) }
-
-        // Set read timeout
+    /// Read bytes from socket until newline or timeout. Returns nil on error/empty.
+    static func readUntilNewline(socket clientSocket: Int32) -> Data? {
+        // Set read/write timeout
         var tv = timeval(tv_sec: timeoutSeconds, tv_usec: 0)
         setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
@@ -155,7 +173,7 @@ public final class SocketServer: Sendable {
 
         // Reject oversized payload
         guard buffer.count <= maxPayloadSize else {
-            return // close without response per protocol spec
+            return nil
         }
 
         // Trim trailing newline
@@ -163,22 +181,19 @@ public final class SocketServer: Sendable {
             buffer = buffer[buffer.startIndex..<newlineIndex]
         }
 
-        guard !buffer.isEmpty else { return }
+        guard !buffer.isEmpty else { return nil }
+        return buffer
+    }
 
-        // Decode message
-        let response: CodoResponse
-        do {
-            let message = try JSONDecoder().decode(CodoMessage.self, from: buffer)
-            if let validationError = message.validate() {
-                response = .error(validationError)
-            } else {
-                response = handler(message)
-            }
-        } catch {
-            response = .error("invalid json")
-        }
+    private static func handleClient(
+        socket clientSocket: Int32,
+        rawHandler: RawMessageHandler
+    ) {
+        defer { Darwin.close(clientSocket) }
 
-        // Send response
+        guard let data = readUntilNewline(socket: clientSocket) else { return }
+
+        let response = rawHandler(data)
         sendResponse(response, to: clientSocket)
     }
 

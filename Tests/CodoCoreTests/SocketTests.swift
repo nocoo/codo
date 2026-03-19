@@ -285,3 +285,75 @@ struct SocketClientErrorTests {
         }
     }
 }
+
+// MARK: - Raw Handler
+
+@Suite("SocketServer RawHandler")
+struct SocketServerRawHandlerTests {
+    @Test func rawHandlerReceivesData() async throws {
+        let path = tempSocketPath()
+        var receivedData: Data?
+        let server = SocketServer(socketPath: path, rawHandler: { data in
+            receivedData = data
+            return .ok
+        })
+        try server.start()
+        defer { server.stop() }
+
+        try await Task.sleep(for: .milliseconds(100))
+
+        let msg = CodoMessage(title: "RawTest", body: nil, sound: nil)
+        let response = try SocketClient.send(msg, socketPath: path)
+        #expect(response.isOk == true)
+        #expect(receivedData != nil)
+        // Verify the raw bytes can be decoded as CodoMessage
+        if let data = receivedData {
+            let decoded = try JSONDecoder().decode(CodoMessage.self, from: data)
+            #expect(decoded.title == "RawTest")
+        }
+    }
+
+    @Test func rawHandlerForHookEvent() async throws {
+        let path = tempSocketPath()
+        var receivedData: Data?
+        let server = SocketServer(socketPath: path, rawHandler: { data in
+            receivedData = data
+            return .ok
+        })
+        try server.start()
+        defer { server.stop() }
+
+        try await Task.sleep(for: .milliseconds(100))
+
+        let hookJSON = #"{"_hook":"stop","session_id":"s1"}"#
+        let raw = Data(hookJSON.utf8 + [UInt8(ascii: "\n")])
+        let responseData = try SocketClient.sendRaw(raw, socketPath: path)
+        let responseStr = String(data: responseData, encoding: .utf8) ?? ""
+        #expect(responseStr.contains("\"ok\":true"))
+        // Verify raw handler received the hook JSON bytes
+        if let data = receivedData {
+            let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            #expect(obj?["_hook"] as? String == "stop")
+            #expect(obj?["session_id"] as? String == "s1")
+        }
+    }
+
+    @Test func legacyHandlerStillWorks() async throws {
+        let path = tempSocketPath()
+        var receivedMessage: CodoMessage?
+        let server = SocketServer(socketPath: path, handler: { message in
+            receivedMessage = message
+            return .ok
+        })
+        try server.start()
+        defer { server.stop() }
+
+        try await Task.sleep(for: .milliseconds(100))
+
+        let msg = CodoMessage(title: "Legacy", body: "B", sound: nil)
+        let response = try SocketClient.send(msg, socketPath: path)
+        #expect(response.isOk == true)
+        #expect(receivedMessage?.title == "Legacy")
+        #expect(receivedMessage?.body == "B")
+    }
+}
