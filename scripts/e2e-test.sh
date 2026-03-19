@@ -151,6 +151,159 @@ else
     skip "silent notification (hard to distinguish)"
 fi
 
+# --- Settings UI ---
+echo ""
+echo "--- Settings UI ---"
+
+if confirm "Click 'Settings...' in the menubar menu — does a settings window open?"; then
+    pass "settings window opens"
+else
+    fail "settings window opens" "user did not see settings window"
+fi
+
+if confirm "Is the API Key field a secure field (masked input)?"; then
+    pass "API key field is secure"
+else
+    fail "API key field is secure" "field is not masked"
+fi
+
+if confirm "Enter an API key → Save → re-open Settings → does the key persist?"; then
+    pass "API key persists in Keychain"
+else
+    fail "API key persists in Keychain" "key did not persist"
+fi
+
+if confirm "Enter a custom Base URL → Save → re-open → does it persist?"; then
+    pass "base URL persists"
+else
+    fail "base URL persists" "base URL did not persist"
+fi
+
+if confirm "Change the model name → Save → re-open → does it persist?"; then
+    pass "model name persists"
+else
+    fail "model name persists" "model name did not persist"
+fi
+
+if confirm "Toggle 'AI Guardian' ON → check 'ps aux | grep guardian' — is a Guardian process running?"; then
+    pass "Guardian process spawns when enabled"
+else
+    fail "Guardian process spawns when enabled" "no Guardian process found"
+fi
+
+if confirm "Toggle 'AI Guardian' OFF → is the Guardian process stopped?"; then
+    pass "Guardian process stops when disabled"
+else
+    fail "Guardian process stops when disabled" "Guardian process still running"
+fi
+
+# --- Guardian ON (requires API key) ---
+echo ""
+echo "--- Guardian ON (requires API key) ---"
+echo "  ℹ  Ensure AI Guardian is ON and an API key is configured before proceeding."
+
+if confirm "Run: echo '{\"_hook\":\"stop\",\"session_id\":\"s1\",\"cwd\":\"/tmp\",\"last_assistant_message\":\"Refactored auth module, 42 tests pass\"}' | bun $CLI --hook stop — did an AI-rewritten notification appear (not raw text)?"; then
+    pass "Guardian rewrites stop notification"
+else
+    fail "Guardian rewrites stop notification" "raw or no notification"
+fi
+
+if confirm "Run: echo '{\"_hook\":\"notification\",\"session_id\":\"s1\",\"cwd\":\"/tmp\",\"title\":\"Permission needed\",\"message\":\"Approve Bash?\",\"notification_type\":\"permission_prompt\"}' | bun $CLI --hook notification — did a notification with enriched context appear?"; then
+    pass "Guardian rewrites notification hook"
+else
+    fail "Guardian rewrites notification hook" "raw or no notification"
+fi
+
+if confirm "Send 3 similar build-failed stop hooks rapidly — was at least 1 suppressed (dedup)?"; then
+    pass "Guardian deduplicates similar notifications"
+else
+    skip "Guardian dedup (hard to verify visually)"
+fi
+
+if confirm "Send a stop hook with a very long message — is the notification concise (not a 1:1 copy)?"; then
+    pass "Guardian summarizes long messages"
+else
+    fail "Guardian summarizes long messages" "notification was too long"
+fi
+
+# --- Guardian OFF (no API key) ---
+echo ""
+echo "--- Guardian OFF (no API key) ---"
+echo "  ℹ  Remove the API key from Settings (or toggle Guardian OFF) before proceeding."
+
+if confirm "Run: echo '{\"_hook\":\"stop\",\"session_id\":\"s1\",\"cwd\":\"/tmp\",\"last_assistant_message\":\"Done\"}' | bun $CLI --hook stop — did a raw notification appear: 'Task Complete — Done'?"; then
+    pass "fallback stop notification"
+else
+    fail "fallback stop notification" "unexpected notification content"
+fi
+
+if confirm "Run: echo '{\"_hook\":\"notification\",\"session_id\":\"s1\",\"cwd\":\"/tmp\",\"title\":\"Perm\",\"message\":\"Approve?\"}' | bun $CLI --hook notification — did a raw notification appear: 'Perm — Approve?'?"; then
+    pass "fallback notification hook"
+else
+    fail "fallback notification hook" "unexpected notification content"
+fi
+
+if confirm "Run: echo '{\"_hook\":\"session-end\",\"session_id\":\"s1\"}' | bun $CLI --hook session-end — was there NO notification (suppressed)?"; then
+    pass "session-end suppressed in fallback mode"
+else
+    fail "session-end suppressed in fallback mode" "unexpected notification appeared"
+fi
+
+# --- Guardian Resilience ---
+echo ""
+echo "--- Guardian Resilience ---"
+echo "  ℹ  Re-enable AI Guardian with API key before proceeding."
+
+if confirm "Kill the Guardian process (kill <pid>) → send a hook → did a raw fallback notification appear AND Guardian restart?"; then
+    pass "Guardian auto-restarts after crash"
+else
+    fail "Guardian auto-restarts after crash" "no restart or no fallback"
+fi
+
+if confirm "Kill Guardian 3 times rapidly → does it stay dead and menubar show Guardian OFF?"; then
+    pass "Guardian gives up after 3 restarts"
+else
+    fail "Guardian gives up after 3 restarts" "Guardian kept restarting"
+fi
+
+if confirm "Restart the daemon (quit + reopen Codo.app) → does Guardian auto-spawn if enabled + API key present?"; then
+    pass "Guardian auto-spawns on daemon restart"
+else
+    fail "Guardian auto-spawns on daemon restart" "Guardian did not auto-spawn"
+fi
+
+# --- Existing Features (regression) ---
+echo ""
+echo "--- Existing Features (regression) ---"
+
+bun "$CLI" "Regression Hello" 2>/dev/null
+if confirm "Did a basic notification appear for 'Regression Hello'?"; then
+    pass "basic notification still works"
+else
+    fail "basic notification still works" "regression in basic notification"
+fi
+
+bun "$CLI" "Build Done" "42 tests passed" --template success 2>/dev/null
+if confirm "Did a notification appear with '✅ Success' subtitle?"; then
+    pass "template success still works"
+else
+    fail "template success still works" "regression in template"
+fi
+
+TEMPLATE_OUT=$(bun "$CLI" --template list 2>/dev/null)
+if echo "$TEMPLATE_OUT" | grep -q "success"; then
+    pass "template list still works"
+else
+    fail "template list still works" "template list output unexpected"
+fi
+
+echo '{"title":"StdinTest"}' | bun "$CLI" 2>/dev/null
+if confirm "Did a notification appear for stdin JSON 'StdinTest'?"; then
+    pass "stdin JSON still works"
+else
+    fail "stdin JSON still works" "regression in stdin JSON"
+fi
+
 # --- Error handling ---
 echo ""
 echo "--- Error Handling ---"
