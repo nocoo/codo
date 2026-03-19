@@ -51,8 +51,8 @@ public struct GuardianSettings {
             label: "MiniMax",
             baseURL: "https://api.minimaxi.com/anthropic/v1",
             sdkType: .anthropic,
-            models: ["MiniMax-M2.5", "MiniMax-M2.1"],
-            defaultModel: "MiniMax-M2.5"
+            models: ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1"],
+            defaultModel: "MiniMax-M2.7"
         ),
         ProviderInfo(
             id: "glm",
