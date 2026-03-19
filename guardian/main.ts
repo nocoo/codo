@@ -2,6 +2,7 @@
 
 import { createInterface } from "node:readline";
 import type { GuardianAction, GuardianConfig, HookEvent } from "./types";
+import { extractCommand } from "./types";
 import { createStateStore, updateState, evictStaleProjects } from "./state";
 import type { StateStore } from "./state";
 import { classifyEvent } from "./classifier";
@@ -13,6 +14,9 @@ import {
   type AiProvider,
   type SdkType,
 } from "./providers";
+import { createLogger } from "./logger";
+
+const log = createLogger("main");
 
 const EVICTION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const EVICTION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -53,12 +57,13 @@ export async function processLine(
   state: StateStore,
   llmClient: LLMClient,
 ): Promise<void> {
+  log.debug("processLine", "recv", { bytes: line.length, preview: line.slice(0, 120) });
+
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(line) as Record<string, unknown>;
   } catch {
-    // Malformed JSON — skip
-    process.stderr.write(`guardian: malformed JSON: ${line.slice(0, 100)}\n`);
+    log.warn("processLine", "malformed JSON", { preview: line.slice(0, 100) });
     return;
   }
 
@@ -68,9 +73,12 @@ export async function processLine(
   if (hook) {
     // Hook event
     const event = parsed as unknown as HookEvent;
+    const slog = event.session_id ? log.withSession(event.session_id) : log;
+    slog.debug("processLine", "hook event parsed", { hook, cwd: event.cwd });
     await processHookEvent(event, state, llmClient);
   } else if (parsed.title) {
     // CodoMessage — forward directly as notification
+    log.info("processLine", "direct CodoMessage", { title: parsed.title as string });
     emitAction({
       action: "send",
       notification: {
@@ -82,7 +90,7 @@ export async function processLine(
       },
     });
   } else {
-    process.stderr.write("guardian: unrecognized message format\n");
+    log.warn("processLine", "unrecognized message format");
   }
 }
 
@@ -91,42 +99,61 @@ async function processHookEvent(
   state: StateStore,
   llmClient: LLMClient,
 ): Promise<void> {
+  const slog = event.session_id ? log.withSession(event.session_id) : log;
+
   // Update state
   updateState(state, event);
 
   // Classify
-  const { shouldTriggerLLM } = classifyEvent(event);
+  const { tier, shouldTriggerLLM } = classifyEvent(event);
+  const cmd = extractCommand(event);
 
-  process.stderr.write(
-    `guardian: event=${event._hook} shouldTriggerLLM=${shouldTriggerLLM}\n`,
-  );
+  slog.info("processHookEvent", "classified", {
+    hook: event._hook,
+    tier,
+    shouldTriggerLLM,
+    ...(cmd ? { cmd: cmd.slice(0, 80) } : {}),
+  });
 
   if (shouldTriggerLLM) {
     // Send to LLM for intelligent processing
+    const t0 = performance.now();
     const result = await llmClient.process(event, state);
-    process.stderr.write(
-      `guardian: LLM result action=${result.action} notification=${JSON.stringify(result.notification)} reason=${result.reason ?? "none"}\n`,
-    );
+    const elapsed = Math.round(performance.now() - t0);
+
+    slog.info("processHookEvent", "llm result", {
+      ms: elapsed,
+      action: result.action,
+      ...(result.notification ? { title: result.notification.title } : {}),
+      ...(result.reason ? { reason: result.reason } : {}),
+    });
     emitAction(result);
   } else {
     // Non-LLM events: use fallback or suppress
     const notification = fallbackNotification(event);
     if (notification) {
-      process.stderr.write(
-        `guardian: fallback notification title=${notification.title}\n`,
-      );
+      slog.info("processHookEvent", "fallback notification", {
+        title: notification.title,
+      });
       emitAction({ action: "send", notification });
+    } else {
+      slog.debug("processHookEvent", "silent accumulation", {
+        hook: event._hook,
+        tier,
+      });
     }
-    // contextual/noise without notification → no output (silent accumulation)
   }
 }
 
 // Only run main() when executed directly (not imported for testing)
 if (import.meta.main) {
   const config = readConfig();
-  process.stderr.write(
-    `guardian: config provider=${config.provider} model=${config.model} sdkType=${config.sdkType} baseURL=${config.baseURL}\n`,
-  );
+  log.info("startup", "config loaded", {
+    provider: config.provider,
+    model: config.model,
+    sdkType: config.sdkType,
+    baseURL: config.baseURL,
+  });
   const state = createStateStore();
   const llmClient = createLLMClient(config);
 
@@ -150,9 +177,10 @@ if (import.meta.main) {
     if (!line.trim()) return;
     queue = queue.then(() => processLine(line, state, llmClient)).catch(
       (err) => {
-        process.stderr.write(
-          `guardian: unhandled error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        log.error("queue", "unhandled error", {
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
       },
     );
   });
@@ -162,5 +190,5 @@ if (import.meta.main) {
     queue.then(() => process.exit(0));
   });
 
-  process.stderr.write("guardian: started\n");
+  log.info("startup", "guardian started");
 }
