@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const SOCKET_PATH = join(homedir(), ".codo", "codo.sock");
 const TIMEOUT_MS = 5000;
 

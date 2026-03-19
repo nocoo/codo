@@ -414,7 +414,7 @@ describe("cli process", () => {
     const stdout = await new Response(proc.stdout).text();
     expect(exitCode).toBe(0);
     expect(stdout).toBe("");
-    expect(stderr).toContain("codo 0.1.0");
+    expect(stderr).toContain("codo 0.1.1");
   });
 
   test("no args with empty stdin exits 1", async () => {

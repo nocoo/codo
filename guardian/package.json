@@ -1,6 +1,6 @@
 {
   "name": "codo-guardian",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI Guardian process for Codo",
   "type": "module",
   "private": true,

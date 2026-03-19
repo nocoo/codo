@@ -54,7 +54,7 @@ fi
 
 STDERR=$(bun "$CLI" --version 2>&1 || true)
 EXIT=$?
-if [ "$EXIT" -eq 0 ] && echo "$STDERR" | grep -q "codo 0.1.0"; then
+if [ "$EXIT" -eq 0 ] && echo "$STDERR" | grep -q "codo 0.1.1"; then
     pass "--version exits 0 with version"
 else
     fail "--version exits 0 with version" "exit=$EXIT"
