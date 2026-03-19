@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        EditMenuSetup.install()
         setupStatusItem()
         setupMenu()
         startDaemon()
