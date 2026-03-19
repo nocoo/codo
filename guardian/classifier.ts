@@ -1,5 +1,8 @@
 import type { HookEvent } from "./types";
 import { extractCommand } from "./types";
+import { createLogger } from "./logger";
+
+const log = createLogger("classifier");
 
 export type EventTier = "important" | "contextual" | "noise";
 
@@ -46,15 +49,33 @@ export function classifyBashEvent(command: string, output: string): EventTier {
 
   // Check important patterns first
   for (const pattern of IMPORTANT_PATTERNS) {
-    if (pattern.test(command)) return "important";
+    if (pattern.test(command)) {
+      log.debug("classifyBash", "matched important", {
+        cmd: command.slice(0, 80),
+        tier: "important",
+        pattern: pattern.source,
+      });
+      return "important";
+    }
   }
 
   // Check contextual patterns
   for (const pattern of CONTEXTUAL_PATTERNS) {
-    if (pattern.test(command)) return "contextual";
+    if (pattern.test(command)) {
+      log.debug("classifyBash", "matched contextual", {
+        cmd: command.slice(0, 80),
+        tier: "contextual",
+        pattern: pattern.source,
+      });
+      return "contextual";
+    }
   }
 
   // Default: noise
+  log.debug("classifyBash", "no pattern matched", {
+    cmd: command.slice(0, 80),
+    tier: "noise",
+  });
   return "noise";
 }
 
@@ -74,6 +95,12 @@ export function classifyEvent(event: HookEvent): ClassifyResult {
       const command = extractCommand(event);
       const output = (event.tool_response as string) ?? "";
       const tier = classifyBashEvent(command, output);
+      log.debug("classifyEvent", "post-tool-use classified", {
+        tool: (event.tool_name as string) ?? "unknown",
+        cmd: command.slice(0, 80),
+        tier,
+        shouldTriggerLLM: tier === "important",
+      });
       return {
         tier,
         shouldTriggerLLM: tier === "important",
