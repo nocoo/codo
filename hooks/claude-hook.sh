@@ -15,12 +15,41 @@
 #
 # Environment:
 #   CODO_DEBUG_HOOKS=1  Enable debug logging to stderr
+#
+# Logs:
+#   ~/.codo/hooks.log — persistent log (INFO+), auto-rotated at 5MB
 
 set +e
 
 DEBUG="${CODO_DEBUG_HOOKS:-0}"
+HOOKS_LOG="$HOME/.codo/hooks.log"
 
-debug() {
+# --- Logging ---
+
+hooklog() {
+  local level="$1"; shift
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local line="$ts [$level] [hook] $*"
+  # Always write to persistent log (INFO and above)
+  case "$level" in
+    INFO|WARN|ERROR)
+      # Simple log rotation: if hooks.log > 5MB, rotate
+      if [ -f "$HOOKS_LOG" ]; then
+        local size
+        size=$(stat -f%z "$HOOKS_LOG" 2>/dev/null || stat -c%s "$HOOKS_LOG" 2>/dev/null || echo 0)
+        if [ "$size" -gt 5242880 ] 2>/dev/null; then
+          mv -f "$HOOKS_LOG" "${HOOKS_LOG}.1"
+        fi
+      fi
+      echo "$line" >> "$HOOKS_LOG" 2>/dev/null
+      ;;
+  esac
+  # DEBUG also writes to persistent log when CODO_DEBUG_HOOKS=1
+  if [ "$DEBUG" = "1" ] && [ "$level" = "DEBUG" ]; then
+    echo "$line" >> "$HOOKS_LOG" 2>/dev/null
+  fi
+  # stderr output for Claude Code debug (only when debug enabled)
   if [ "$DEBUG" = "1" ]; then
     echo "[codo-hook] $*" >&2
   fi
@@ -30,20 +59,22 @@ debug() {
 INPUT=$(cat)
 
 if [ -z "$INPUT" ]; then
-  debug "empty stdin, skipping"
+  hooklog DEBUG "empty stdin, skipping"
   exit 0
 fi
+
+hooklog DEBUG "received event, payload_bytes=${#INPUT}"
 
 # --- Extract hook_event_name (no jq dependency) ---
 # Tolerates optional whitespace around colon (compact, pretty-printed, or multiline JSON)
 EVENT_NAME=$(echo "$INPUT" | grep -oE '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
 
 if [ -z "$EVENT_NAME" ]; then
-  debug "no hook_event_name found, skipping"
+  hooklog WARN "no hook_event_name found, skipping"
   exit 0
 fi
 
-debug "event: $EVENT_NAME"
+hooklog DEBUG "event=$EVENT_NAME"
 
 # --- Map Claude Code event → codo hook type ---
 case "$EVENT_NAME" in
@@ -66,12 +97,12 @@ case "$EVENT_NAME" in
     HOOK_TYPE="session-end"
     ;;
   *)
-    debug "unhandled event: $EVENT_NAME, skipping"
+    hooklog WARN "unhandled event=$EVENT_NAME, skipping"
     exit 0
     ;;
 esac
 
-debug "mapped to hook type: $HOOK_TYPE"
+hooklog INFO "event=$EVENT_NAME mapped=$HOOK_TYPE"
 
 # --- Resolve codo CLI path (three-level fallback) ---
 CODO_BIN=""
@@ -92,15 +123,21 @@ else
 fi
 
 if [ -z "$CODO_BIN" ]; then
-  debug "codo CLI not found, skipping"
+  hooklog ERROR "codo CLI not found, skipping"
   exit 0
 fi
 
-debug "using codo: $CODO_BIN"
+hooklog DEBUG "bin=$CODO_BIN"
 
 # --- Forward to codo CLI ---
-echo "$INPUT" | $CODO_BIN --hook "$HOOK_TYPE" >/dev/null 2>&1
+# Capture codo CLI exit code correctly (stderr goes to hooks.log, not /dev/null)
+echo "$INPUT" | $CODO_BIN --hook "$HOOK_TYPE" >/dev/null 2>>"$HOOKS_LOG"
+CODO_EXIT=${PIPESTATUS[1]:-$?}
 
-debug "forwarded, exit code: $?"
+if [ "$CODO_EXIT" -eq 0 ]; then
+  hooklog INFO "sent hook=$HOOK_TYPE exit=0"
+else
+  hooklog ERROR "send failed hook=$HOOK_TYPE exit=$CODO_EXIT"
+fi
 
 exit 0
