@@ -125,7 +125,7 @@ describe("buildSystemPrompt", () => {
     }
 
     const prompt = buildSystemPrompt(store);
-    expect(prompt).toContain("notification assistant");
+    expect(prompt).toContain("通知助手");
     expect(prompt).toContain("send_notification");
     expect(prompt).toContain("suppress");
     expect(prompt).toContain("Active Projects");
@@ -135,7 +135,7 @@ describe("buildSystemPrompt", () => {
   test("empty state has role and tools only", () => {
     const store = createStateStore();
     const prompt = buildSystemPrompt(store);
-    expect(prompt).toContain("notification assistant");
+    expect(prompt).toContain("通知助手");
     expect(prompt).toContain("send_notification");
     expect(prompt).not.toContain("Active Projects");
     expect(prompt).not.toContain("Recent Events");

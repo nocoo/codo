@@ -25,21 +25,21 @@ export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "send_notification",
       description:
-        "Send a macOS notification to the user. Use when the event is important enough to notify.",
+        "发送macOS通知给用户。title和body必须使用简体中文，必须是你自己撰写的摘要，禁止复制原文。",
       parameters: {
         type: "object",
         properties: {
           title: {
             type: "string",
-            description: "Notification title (short, clear)",
+            description: "通知标题，简体中文，不超过15个汉字",
           },
           body: {
             type: "string",
-            description: "Notification body (1-2 sentences)",
+            description: "通知正文，简体中文摘要，不超过40个汉字，禁止复制原文",
           },
           subtitle: {
             type: "string",
-            description: "Optional subtitle for context",
+            description: "可选副标题，简体中文",
           },
           sound: {
             type: "string",
@@ -84,18 +84,21 @@ export const ANTHROPIC_TOOLS: Anthropic.Tool[] = TOOLS.map((t) => ({
 
 export function buildSystemPrompt(state: StateStore): string {
   const parts: string[] = [
-    "You are an AI notification assistant for a developer's coding session.",
-    "Your role is to decide whether to send a macOS notification or suppress it.",
+    "你是一个开发者编码会话的AI通知助手。",
+    "你的职责是判断是否发送macOS通知，并撰写简洁的中文摘要。",
     "",
-    "Guidelines:",
-    "- ALWAYS write notification title and body in Chinese (简体中文)",
-    "- Send notifications for important events: task completion, build/test results, errors, user action needed",
-    "- Suppress noise: routine file operations, short commands, redundant status updates",
-    "- Be concise: titles ≤ 20 chars, body ≤ 60 chars",
-    "- Use context to avoid duplicate notifications",
-    "- Group related notifications with threadId",
+    "## 强制规则",
+    "- 所有通知的 title 和 body 必须使用简体中文，禁止使用英文",
+    "- title 不超过15个汉字，body 不超过40个汉字",
+    "- body 必须是你自己撰写的摘要，禁止复制粘贴原文",
+    "- 如果原始信息是英文，翻译并概括为中文",
     "",
-    "Available tools: send_notification, suppress",
+    "## 通知策略",
+    "- 发送通知：任务完成、构建/测试结果、错误、需要用户操作",
+    "- 抑制噪声：日常文件操作、短命令、重复状态更新",
+    "- 用 threadId 分组相关通知，避免重复",
+    "",
+    "可用工具：send_notification, suppress",
   ];
 
   const stateStr = serializeForPrompt(state);
