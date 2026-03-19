@@ -1037,20 +1037,20 @@ swift test && cd cli && bun test && cd .. && cd guardian && bun test && cd .. \
 
 | # | Commit | Status |
 |---|--------|--------|
-| 1 | `docs: add AI Guardian detailed design` | |
-| 2 | `feat: add MessageRouter for discriminated union dispatch` | |
-| 3 | `refactor: add raw handler to SocketServer` | |
-| 4 | `feat: add --hook flag to CLI` | |
-| 5 | `test: add hook event integration tests` | |
-| 6 | `feat: add KeychainService and GuardianSettings` | |
-| 7 | `feat: add GuardianProtocol and GuardianProcess` | |
-| 8 | `feat: add settings window UI` | |
-| 9 | `refactor: wire MessageRouter and Guardian into AppDelegate` | |
-| 10 | `feat: add Guardian state module` | |
-| 11 | `feat: add event classifier` | |
-| 12 | `feat: add fallback notification mapping` | |
-| 13 | `feat: add LLM client and prompt assembly` | |
-| 14 | `feat: add Guardian main entry point` | |
-| 15 | `test: add Guardian integration tests` | |
-| 16 | `test: update L4 E2E checklist for Guardian` | |
-| 17 | `docs: update architecture docs and README` | |
+| 1 | `docs: add AI Guardian detailed design` | ✅ Done |
+| 2 | `feat: add MessageRouter for discriminated union dispatch` | ✅ Done (05dee58) |
+| 3 | `refactor: add raw handler to SocketServer` | ✅ Done (b023811) |
+| 4 | `feat: add --hook flag to CLI` | ✅ Done (030d791) |
+| 5 | `test: add hook event integration tests` | ✅ Done (83d08c3) |
+| 6 | `feat: add KeychainService and GuardianSettings` | ✅ Done (a481656) |
+| 7 | `feat: add GuardianProtocol and GuardianProcess` | ✅ Done (52f217d) |
+| 8 | `feat: add settings window UI` | ✅ Done (c361494) |
+| 9 | `refactor: wire MessageRouter and Guardian into AppDelegate` | ✅ Done (bd00436) |
+| 10 | `feat: add Guardian state module` | ✅ Done (005363d) — types + classifier |
+| 11 | `feat: add event classifier` | ✅ Done (005363d) — shipped with #10 |
+| 12 | `feat: add fallback notification mapping` | ✅ Done (ea31a02) |
+| 13 | `feat: add LLM client and prompt assembly` | ✅ Done (bd5319d) |
+| 14 | `feat: add Guardian main entry point` | ✅ Done (5e109d5) |
+| 15 | `test: add Guardian integration tests` | ✅ Done (ad42c88) |
+| 16 | `test: update L4 E2E checklist for Guardian` | ✅ Done (1fc5a51) |
+| 17 | `docs: update architecture docs and README` | ✅ Done (96d4c58) |
