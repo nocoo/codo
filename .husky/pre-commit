@@ -7,10 +7,14 @@ swift test 2>&1
 echo "=== L1: TS Unit Tests ==="
 cd cli && bun test 2>&1 && cd ..
 
+echo "=== L1: Guardian Unit Tests ==="
+cd guardian && bun test 2>&1 && cd ..
+
 echo "=== L2: Swift Lint ==="
 swiftlint lint --strict --quiet
 
 echo "=== L2: TS Lint ==="
 cd cli && bunx biome check . && cd ..
+cd guardian && bunx biome check . && cd ..
 
 echo "✓ pre-commit passed"
