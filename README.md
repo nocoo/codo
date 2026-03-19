@@ -133,6 +133,40 @@ codo <title> [body] [--template <name>] [--subtitle <text>] [--thread <id>] [--s
 | `deploy` | 🚀 Deploy | default | Deployment lifecycle |
 | `review` | 👀 Review | default | PR/code review requests |
 
+## Claude Code Integration
+
+Codo includes a hook script that receives all Claude Code events and routes them to the daemon. After installing, configure `~/.claude/settings.json` to point at the script:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "~/.codo/hooks/claude-hook.sh" }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "~/.codo/hooks/claude-hook.sh" }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "~/.codo/hooks/claude-hook.sh" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.codo/hooks/claude-hook.sh" }] }
+    ],
+    "PostToolUseFailure": [
+      { "hooks": [{ "type": "command", "command": "~/.codo/hooks/claude-hook.sh" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "~/.codo/hooks/claude-hook.sh" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "~/.codo/hooks/claude-hook.sh" }] }
+    ]
+  }
+}
+```
+
+Debug with `CODO_DEBUG_HOOKS=1` — output goes to stderr only, never blocks the agent. See [docs/features/04-claude-hook-integration.md](docs/features/04-claude-hook-integration.md) for the full design.
+
 ## Docs
 
 See [docs/](docs/) for design documents:
