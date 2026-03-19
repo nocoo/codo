@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type OpenAI from "openai";
+import type Anthropic from "@anthropic-ai/sdk";
 import {
   TOOLS,
+  ANTHROPIC_TOOLS,
   buildSystemPrompt,
   buildUserMessage,
   createLLMClient,
 } from "./llm";
 import { createStateStore, updateState } from "./state";
-import type { HookEvent } from "./types";
+import type { GuardianConfig, HookEvent } from "./types";
 
 function makeEvent(
   overrides: Partial<HookEvent> & { _hook: HookEvent["_hook"] },
@@ -17,6 +19,32 @@ function makeEvent(
     hook_event_name: overrides._hook,
     ...overrides,
   } as HookEvent;
+}
+
+function openaiConfig(overrides?: Partial<GuardianConfig>): GuardianConfig {
+  return {
+    provider: "custom",
+    apiKey: "test",
+    baseURL: "http://localhost",
+    model: "test",
+    sdkType: "openai",
+    contextLimit: 100000,
+    ...overrides,
+  };
+}
+
+function anthropicConfig(
+  overrides?: Partial<GuardianConfig>,
+): GuardianConfig {
+  return {
+    provider: "anthropic",
+    apiKey: "test",
+    baseURL: "http://localhost",
+    model: "test",
+    sdkType: "anthropic",
+    contextLimit: 100000,
+    ...overrides,
+  };
 }
 
 function createMockOpenAI(
@@ -41,6 +69,26 @@ function createErrorOpenAI(error: Error): OpenAI {
       },
     },
   } as unknown as OpenAI;
+}
+
+function createMockAnthropic(
+  response: Partial<Anthropic.Message>,
+): Anthropic {
+  return {
+    messages: {
+      create: async () => response,
+    },
+  } as unknown as Anthropic;
+}
+
+function createErrorAnthropic(error: Error): Anthropic {
+  return {
+    messages: {
+      create: async () => {
+        throw error;
+      },
+    },
+  } as unknown as Anthropic;
 }
 
 describe("buildSystemPrompt", () => {
@@ -142,25 +190,30 @@ describe("TOOLS", () => {
     expect(names).toContain("send_notification");
     expect(names).toContain("suppress");
   });
+
+  test("ANTHROPIC_TOOLS mirrors OpenAI TOOLS", () => {
+    const names = ANTHROPIC_TOOLS.map((t) => t.name);
+    expect(names).toContain("send_notification");
+    expect(names).toContain("suppress");
+    expect(ANTHROPIC_TOOLS.length).toBe(TOOLS.length);
+  });
 });
 
 describe("createLLMClient", () => {
-  test("config sets base URL and model", () => {
-    const config = {
-      apiKey: "test-key",
-      baseURL: "https://api.example.com/v1",
-      model: "test-model",
-      contextLimit: 100000,
-    };
+  test("OpenAI config creates client", () => {
+    const client = createLLMClient(openaiConfig());
+    expect(client).toBeDefined();
+    expect(client.process).toBeFunction();
+  });
 
-    // Just verify it doesn't throw
-    const client = createLLMClient(config);
+  test("Anthropic config creates client", () => {
+    const client = createLLMClient(anthropicConfig());
     expect(client).toBeDefined();
     expect(client.process).toBeFunction();
   });
 });
 
-describe("LLM process", () => {
+describe("OpenAI LLM process", () => {
   test("mock returns send action", async () => {
     const mockResponse: Partial<OpenAI.Chat.Completions.ChatCompletion> = {
       choices: [
@@ -192,15 +245,7 @@ describe("LLM process", () => {
     };
 
     const mockOpenAI = createMockOpenAI(mockResponse);
-    const client = createLLMClient(
-      {
-        apiKey: "test",
-        baseURL: "http://localhost",
-        model: "test",
-        contextLimit: 100000,
-      },
-      mockOpenAI,
-    );
+    const client = createLLMClient(openaiConfig(), mockOpenAI);
 
     const state = createStateStore();
     const event = makeEvent({
@@ -243,15 +288,7 @@ describe("LLM process", () => {
     };
 
     const mockOpenAI = createMockOpenAI(mockResponse);
-    const client = createLLMClient(
-      {
-        apiKey: "test",
-        baseURL: "http://localhost",
-        model: "test",
-        contextLimit: 100000,
-      },
-      mockOpenAI,
-    );
+    const client = createLLMClient(openaiConfig(), mockOpenAI);
 
     const state = createStateStore();
     const event = makeEvent({
@@ -266,15 +303,7 @@ describe("LLM process", () => {
 
   test("API error falls back to raw notification", async () => {
     const mockOpenAI = createErrorOpenAI(new Error("API rate limited"));
-    const client = createLLMClient(
-      {
-        apiKey: "test",
-        baseURL: "http://localhost",
-        model: "test",
-        contextLimit: 100000,
-      },
-      mockOpenAI,
-    );
+    const client = createLLMClient(openaiConfig(), mockOpenAI);
 
     const state = createStateStore();
     const event = makeEvent({
@@ -283,31 +312,132 @@ describe("LLM process", () => {
     });
 
     const result = await client.process(event, state);
-    // Should fall back to fallback notification
     expect(result.action).toBe("send");
     expect(result.notification?.title).toBe("Task Complete");
   });
 
   test("API error on suppressible event falls back correctly", async () => {
-    const mockOpenAI = createErrorOpenAI(new Error("500 Internal Server Error"));
+    const mockOpenAI = createErrorOpenAI(
+      new Error("500 Internal Server Error"),
+    );
+    const client = createLLMClient(openaiConfig(), mockOpenAI);
+
+    const state = createStateStore();
+    const event = makeEvent({ _hook: "session-end" });
+
+    const result = await client.process(event, state);
+    expect(result.action).toBe("suppress");
+    expect(result.reason).toContain("LLM error");
+  });
+});
+
+describe("Anthropic LLM process", () => {
+  test("mock returns send action via tool_use", async () => {
+    const mockResponse: Partial<Anthropic.Message> = {
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_1",
+          name: "send_notification",
+          input: {
+            title: "Build Done",
+            body: "All tests passed",
+            sound: "default",
+          },
+        },
+      ],
+    };
+
+    const mockAnthropic = createMockAnthropic(mockResponse);
     const client = createLLMClient(
-      {
-        apiKey: "test",
-        baseURL: "http://localhost",
-        model: "test",
-        contextLimit: 100000,
-      },
-      mockOpenAI,
+      anthropicConfig(),
+      undefined,
+      mockAnthropic,
     );
 
     const state = createStateStore();
     const event = makeEvent({
-      _hook: "session-end",
+      _hook: "stop",
+      last_assistant_message: "Built and tested",
     });
 
     const result = await client.process(event, state);
-    // session-end fallback returns null → suppress
+    expect(result.action).toBe("send");
+    expect(result.notification?.title).toBe("Build Done");
+    expect(result.notification?.body).toBe("All tests passed");
+  });
+
+  test("mock returns suppress action via tool_use", async () => {
+    const mockResponse: Partial<Anthropic.Message> = {
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_2",
+          name: "suppress",
+          input: { reason: "routine file read" },
+        },
+      ],
+    };
+
+    const mockAnthropic = createMockAnthropic(mockResponse);
+    const client = createLLMClient(
+      anthropicConfig(),
+      undefined,
+      mockAnthropic,
+    );
+
+    const state = createStateStore();
+    const event = makeEvent({
+      _hook: "post-tool-use",
+      command: "cat file.txt",
+    });
+
+    const result = await client.process(event, state);
     expect(result.action).toBe("suppress");
-    expect(result.reason).toContain("LLM error");
+    expect(result.reason).toBe("routine file read");
+  });
+
+  test("API error falls back to raw notification", async () => {
+    const mockAnthropic = createErrorAnthropic(
+      new Error("overloaded_error"),
+    );
+    const client = createLLMClient(
+      anthropicConfig(),
+      undefined,
+      mockAnthropic,
+    );
+
+    const state = createStateStore();
+    const event = makeEvent({
+      _hook: "stop",
+      last_assistant_message: "Completed refactoring",
+    });
+
+    const result = await client.process(event, state);
+    expect(result.action).toBe("send");
+    expect(result.notification?.title).toBe("Task Complete");
+  });
+
+  test("no tool_use block falls back", async () => {
+    const mockResponse: Partial<Anthropic.Message> = {
+      content: [{ type: "text", text: "I should send a notification" }],
+    };
+
+    const mockAnthropic = createMockAnthropic(mockResponse);
+    const client = createLLMClient(
+      anthropicConfig(),
+      undefined,
+      mockAnthropic,
+    );
+
+    const state = createStateStore();
+    const event = makeEvent({
+      _hook: "stop",
+      last_assistant_message: "Done",
+    });
+
+    const result = await client.process(event, state);
+    expect(result.action).toBe("send");
+    expect(result.notification?.title).toBe("Task Complete");
   });
 });

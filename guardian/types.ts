@@ -41,9 +41,11 @@ export interface HookEvent {
 }
 
 export interface GuardianConfig {
+  provider: string;
   apiKey: string;
   baseURL: string;
   model: string;
+  sdkType: string;
   contextLimit: number;
 }
 

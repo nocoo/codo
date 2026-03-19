@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import type {
   GuardianConfig,
   GuardianResult,
@@ -15,6 +16,8 @@ const LLM_TIMEOUT_MS = 10_000;
 export interface LLMClient {
   process(event: HookEvent, state: StateStore): Promise<GuardianResult>;
 }
+
+// ── Tool definitions (OpenAI format, also used as reference for Anthropic) ──
 
 export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -71,6 +74,13 @@ export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     },
   },
 ];
+
+/** Anthropic tool format converted from OpenAI TOOLS. */
+export const ANTHROPIC_TOOLS: Anthropic.Tool[] = TOOLS.map((t) => ({
+  name: t.function.name,
+  description: t.function.description ?? "",
+  input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
+}));
 
 export function buildSystemPrompt(state: StateStore): string {
   const parts: string[] = [
@@ -154,7 +164,9 @@ export function buildUserMessage(event: HookEvent): string {
   return parts.join("\n");
 }
 
-function parseToolCall(
+// ── OpenAI tool call parsing ──
+
+function parseOpenAIToolCall(
   toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
 ): GuardianResult {
   const args = JSON.parse(toolCall.function.arguments) as Record<
@@ -179,7 +191,48 @@ function parseToolCall(
   };
 }
 
+// ── Anthropic tool call parsing ──
+
+function parseAnthropicToolUse(
+  block: Anthropic.ToolUseBlock,
+): GuardianResult {
+  const args = block.input as Record<string, unknown>;
+
+  if (block.name === "send_notification") {
+    const notification: NotificationPayload = {
+      title: args.title as string,
+      body: args.body as string | undefined,
+      subtitle: args.subtitle as string | undefined,
+      sound: args.sound as string | undefined,
+      threadId: args.threadId as string | undefined,
+    };
+    return { action: "send", notification };
+  }
+
+  return {
+    action: "suppress",
+    reason: (args.reason as string) ?? "suppressed by LLM",
+  };
+}
+
+// ── Client creation ──
+
+/**
+ * Create an LLM client that dispatches to OpenAI or Anthropic SDK
+ * based on config.sdkType.
+ */
 export function createLLMClient(
+  config: GuardianConfig,
+  openaiClient?: OpenAI,
+  anthropicClient?: Anthropic,
+): LLMClient {
+  if (config.sdkType === "anthropic") {
+    return createAnthropicLLMClient(config, anthropicClient);
+  }
+  return createOpenAILLMClient(config, openaiClient);
+}
+
+function createOpenAILLMClient(
   config: GuardianConfig,
   client?: OpenAI,
 ): LLMClient {
@@ -219,16 +272,79 @@ export function createLLMClient(
 
         const toolCalls = response.choices[0]?.message?.tool_calls;
         if (toolCalls && toolCalls.length > 0) {
-          return parseToolCall(toolCalls[0]);
+          return parseOpenAIToolCall(toolCalls[0]);
         }
 
-        // No tool call — fall back to raw notification
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }
           : { action: "suppress", reason: "no tool call from LLM" };
       } catch (error) {
-        // Timeout or API error — fall back to raw notification
+        const fb = fallbackNotification(event);
+        return fb
+          ? { action: "send", notification: fb }
+          : {
+              action: "suppress",
+              reason: `LLM error: ${error instanceof Error ? error.message : "unknown"}`,
+            };
+      }
+    },
+  };
+}
+
+function createAnthropicLLMClient(
+  config: GuardianConfig,
+  client?: Anthropic,
+): LLMClient {
+  const anthropic =
+    client ??
+    new Anthropic({
+      apiKey: config.apiKey,
+      baseURL: config.baseURL,
+    });
+
+  return {
+    async process(
+      event: HookEvent,
+      state: StateStore,
+    ): Promise<GuardianResult> {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          LLM_TIMEOUT_MS,
+        );
+
+        const response = await anthropic.messages.create(
+          {
+            model: config.model,
+            max_tokens: 1024,
+            system: buildSystemPrompt(state),
+            messages: [
+              { role: "user", content: buildUserMessage(event) },
+            ],
+            tools: ANTHROPIC_TOOLS,
+            tool_choice: { type: "any" },
+          },
+          { signal: controller.signal },
+        );
+
+        clearTimeout(timeout);
+
+        const toolUse = response.content.find(
+          (block): block is Anthropic.ToolUseBlock =>
+            block.type === "tool_use",
+        );
+
+        if (toolUse) {
+          return parseAnthropicToolUse(toolUse);
+        }
+
+        const fb = fallbackNotification(event);
+        return fb
+          ? { action: "send", notification: fb }
+          : { action: "suppress", reason: "no tool use from LLM" };
+      } catch (error) {
         const fb = fallbackNotification(event);
         return fb
           ? { action: "send", notification: fb }

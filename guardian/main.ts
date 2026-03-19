@@ -7,15 +7,35 @@ import type { StateStore } from "./state";
 import { classifyEvent } from "./classifier";
 import { createLLMClient, type LLMClient } from "./llm";
 import { fallbackNotification } from "./fallback";
+import {
+  isValidProvider,
+  resolveProviderConfig,
+  type AiProvider,
+  type SdkType,
+} from "./providers";
 
 const EVICTION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const EVICTION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function readConfig(): GuardianConfig {
-  return {
+  const providerRaw = process.env.CODO_PROVIDER ?? "custom";
+  const provider: AiProvider = isValidProvider(providerRaw)
+    ? providerRaw
+    : "custom";
+  const sdkTypeRaw = process.env.CODO_SDK_TYPE ?? "openai";
+  const sdkType: SdkType =
+    sdkTypeRaw === "anthropic" ? "anthropic" : "openai";
+
+  const resolved = resolveProviderConfig({
+    provider,
     apiKey: process.env.CODO_API_KEY ?? "",
-    baseURL: process.env.CODO_BASE_URL ?? "https://api.openai.com/v1",
-    model: process.env.CODO_MODEL ?? "gpt-4o-mini",
+    model: process.env.CODO_MODEL ?? "",
+    baseURL: process.env.CODO_BASE_URL,
+    sdkType,
+  });
+
+  return {
+    ...resolved,
     contextLimit: Number.parseInt(
       process.env.CODO_CONTEXT_LIMIT ?? "160000",
       10,
