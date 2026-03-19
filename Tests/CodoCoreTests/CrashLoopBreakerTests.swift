@@ -135,6 +135,25 @@ struct CrashLoopBreakerTests {
         #expect(breaker.currentFailureCount == 2)
     }
 
+    @Test("immediate failure after recordStart is counted and timer is cancelled")
+    func immediateFailureAfterStart() async throws {
+        // Regression: if recordStart() were async, a synchronous recordFailure()
+        // right after could execute first, then the queued recordStart() would
+        // re-arm the stability timer and later clear the failure — masking a
+        // real crash. With recordStart() synchronous, the ordering is guaranteed:
+        // start arms timer → failure cancels timer and increments count.
+        let breaker = CrashLoopBreaker(maxFailures: 3, stabilityInterval: 0.1)
+
+        breaker.recordStart()
+        breaker.recordFailure() // immediate crash
+        #expect(breaker.currentFailureCount == 1)
+
+        // Wait past stability interval — timer should have been cancelled
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(breaker.currentFailureCount == 1) // NOT reset to 0
+        #expect(breaker.isTripped == false)
+    }
+
     @Test("rapid crash-loop scenario trips breaker")
     func rapidCrashLoop() {
         let breaker = CrashLoopBreaker(maxFailures: 3, stabilityInterval: 10.0)

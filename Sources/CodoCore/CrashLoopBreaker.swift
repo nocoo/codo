@@ -42,15 +42,17 @@ public final class CrashLoopBreaker: @unchecked Sendable {
     /// Record that the process started successfully.
     /// Starts the stability timer — if it fires without an intervening
     /// `recordFailure`, the failure counter resets.
+    ///
+    /// Synchronous on `queue` so that a rapid crash (recordFailure) immediately
+    /// after start always sees the timer already armed and can cancel it.
     public func recordStart() {
-        queue.async { [self] in
+        queue.sync { [self] in
             guard !tripped else { return }
             cancelTimerUnsafe()
 
             let timer = DispatchWorkItem { [weak self] in
-                self?.queue.async {
-                    self?.failureCount = 0
-                }
+                // Already on `queue` (scheduled via asyncAfter on it).
+                self?.failureCount = 0
             }
             stabilityTimer = timer
             queue.asyncAfter(
