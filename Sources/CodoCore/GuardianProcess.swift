@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "ai.hexly.codo.01", category: "guardian")
 
 /// Manages the Guardian child process lifecycle.
 ///
@@ -12,6 +15,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     private var process: Process?
     private var stdinPipe: Pipe?
     private var stdoutPipe: Pipe?
+    private var stderrPipe: Pipe?
     private let writeQueue = DispatchQueue(label: "codo.guardian.stdin")
     private let notificationService: NotificationService
     private let bunPath: String
@@ -112,12 +116,14 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
         let stdin = Pipe()
         let stdout = Pipe()
+        let stderr = Pipe()
         proc.standardInput = stdin
         proc.standardOutput = stdout
-        proc.standardError = FileHandle.nullDevice
+        proc.standardError = stderr
 
         self.stdinPipe = stdin
         self.stdoutPipe = stdout
+        self.stderrPipe = stderr
         self.process = proc
 
         // Monitor for unexpected termination
@@ -135,6 +141,12 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
         thread.qualityOfService = .userInitiated
         thread.name = "codo.guardian.stdout"
         thread.start()
+
+        // Start background stderr reader (logs to ~/.codo/guardian.log)
+        let capturedStderr = stderr
+        DispatchQueue.global(qos: .utility).async {
+            Self.readStderrLoop(pipe: capturedStderr)
+        }
     }
 
     /// Stop the Guardian process (SIGTERM). Intentional stop — no auto-restart.
@@ -146,6 +158,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
         process = nil
         stdinPipe = nil
         stdoutPipe = nil
+        stderrPipe = nil
     }
 
     // MARK: - Private
@@ -163,6 +176,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
         process = nil
         stdinPipe = nil
         stdoutPipe = nil
+        stderrPipe = nil
 
         // Restart after a short delay to avoid tight crash loops
         guard let config = lastConfig else { return }
@@ -212,5 +226,42 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Background stderr reader. Forwards each line to os.Logger and log file.
+    private static func readStderrLoop(pipe: Pipe) {
+        // Create log file immediately to verify this method runs
+        let logPath = "\(NSHomeDirectory())/.codo/guardian.log"
+        FileManager.default.createFile(atPath: logPath, contents: Data("--- guardian stderr log started ---\n".utf8))
+
+        let handle = pipe.fileHandleForReading
+
+        guard let logHandle = FileHandle(forWritingAtPath: logPath) else { return }
+        logHandle.seekToEndOfFile()
+
+        var buffer = Data()
+
+        while true {
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { break } // EOF
+
+            buffer.append(chunk)
+
+            // Process complete lines
+            while let newlineIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                let lineData = buffer[buffer.startIndex..<newlineIndex]
+                buffer = buffer[buffer.index(after: newlineIndex)...]
+
+                guard !lineData.isEmpty,
+                      let line = String(data: Data(lineData), encoding: .utf8) else { continue }
+
+                logger.notice("\(line, privacy: .public)")
+                // Also write to log file with timestamp
+                let logLine = "[\(ISO8601DateFormatter().string(from: Date()))] \(line)\n"
+                logHandle.write(Data(logLine.utf8))
+            }
+        }
+
+        logHandle.closeFile()
     }
 }
