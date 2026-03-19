@@ -305,6 +305,149 @@ fi
 
 rm -f /tmp/codo-integ-stderr.txt
 
+# --- Hook script ---
+echo ""
+echo "--- Hook script ---"
+
+HOOK_SCRIPT="$PROJECT_DIR/hooks/claude-hook.sh"
+
+# Test: script is executable
+if [ -x "$HOOK_SCRIPT" ]; then
+    pass "hook script is executable"
+else
+    fail "hook script is executable" "not executable: $HOOK_SCRIPT"
+fi
+
+# Test: Stop → _hook:"stop" roundtrip
+echo '{"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"Done"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"stop"'; then
+    pass "Stop → _hook:stop roundtrip"
+else
+    fail "Stop → _hook:stop roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: SubagentStop → _hook:"stop" (merged mapping)
+echo '{"hook_event_name":"SubagentStop","session_id":"s1","last_assistant_message":"Sub done"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"stop"'; then
+    pass "SubagentStop → _hook:stop roundtrip"
+else
+    fail "SubagentStop → _hook:stop roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: Notification → _hook:"notification"
+echo '{"hook_event_name":"Notification","session_id":"s1","title":"Perm","message":"Approve?"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"notification"'; then
+    pass "Notification → _hook:notification roundtrip"
+else
+    fail "Notification → _hook:notification roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: PostToolUse → _hook:"post-tool-use"
+echo '{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"Bash","command":"npm test"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"post-tool-use"'; then
+    pass "PostToolUse → _hook:post-tool-use roundtrip"
+else
+    fail "PostToolUse → _hook:post-tool-use roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: PostToolUseFailure → _hook:"post-tool-use-failure"
+echo '{"hook_event_name":"PostToolUseFailure","session_id":"s1","tool_name":"Bash","error":"exit 1"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"post-tool-use-failure"'; then
+    pass "PostToolUseFailure → _hook:post-tool-use-failure roundtrip"
+else
+    fail "PostToolUseFailure → _hook:post-tool-use-failure roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: SessionStart + SessionEnd roundtrip
+echo '{"hook_event_name":"SessionStart","session_id":"s1"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT1=$?
+LAST1=$(tail -1 "$MSG_LOG" 2>/dev/null)
+echo '{"hook_event_name":"SessionEnd","session_id":"s1"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT2=$?
+LAST2=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT1" -eq 0 ] && [ "$EXIT2" -eq 0 ] \
+   && echo "$LAST1" | grep -q '"_hook":"session-start"' \
+   && echo "$LAST2" | grep -q '"_hook":"session-end"'; then
+    pass "SessionStart/End roundtrip"
+else
+    fail "SessionStart/End roundtrip" "exit1=$EXIT1 exit2=$EXIT2 last1='$LAST1' last2='$LAST2'"
+fi
+
+# Test: unknown event → exit 0, no dispatch
+BEFORE=$(wc -l < "$MSG_LOG" 2>/dev/null || echo 0)
+echo '{"hook_event_name":"PreToolUse","session_id":"s1"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+AFTER=$(wc -l < "$MSG_LOG" 2>/dev/null || echo 0)
+if [ "$EXIT" -eq 0 ] && [ "$BEFORE" -eq "$AFTER" ]; then
+    pass "unknown event → exit 0, no dispatch"
+else
+    fail "unknown event → exit 0, no dispatch" "exit=$EXIT before=$BEFORE after=$AFTER"
+fi
+
+# Test: missing hook_event_name → exit 0
+BEFORE=$(wc -l < "$MSG_LOG" 2>/dev/null || echo 0)
+echo '{"session_id":"s1"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+AFTER=$(wc -l < "$MSG_LOG" 2>/dev/null || echo 0)
+if [ "$EXIT" -eq 0 ] && [ "$BEFORE" -eq "$AFTER" ]; then
+    pass "missing event name → exit 0, no dispatch"
+else
+    fail "missing event name → exit 0, no dispatch" "exit=$EXIT"
+fi
+
+# Test: empty stdin → exit 0
+BEFORE=$(wc -l < "$MSG_LOG" 2>/dev/null || echo 0)
+echo -n "" \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+AFTER=$(wc -l < "$MSG_LOG" 2>/dev/null || echo 0)
+if [ "$EXIT" -eq 0 ] && [ "$BEFORE" -eq "$AFTER" ]; then
+    pass "empty stdin → exit 0, no dispatch"
+else
+    fail "empty stdin → exit 0, no dispatch" "exit=$EXIT"
+fi
+
+# Test: daemon not running → exit 0 (graceful degradation)
+DEAD_HOME=$(mktemp -d /tmp/codo-dead-XXXXXXXX)
+mkdir -p "$DEAD_HOME/.codo"
+echo '{"hook_event_name":"Stop","session_id":"s1"}' \
+  | HOME="$DEAD_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+rm -rf "$DEAD_HOME"
+if [ "$EXIT" -eq 0 ]; then
+    pass "daemon not running → exit 0"
+else
+    fail "daemon not running → exit 0" "exit=$EXIT"
+fi
+
+# Test: CODO_DEBUG_HOOKS=1 → stderr has output
+STDERR=$(echo '{"hook_event_name":"Stop","session_id":"s1"}' \
+  | HOME="$FAKE_HOME" CODO_DEBUG_HOOKS=1 bash "$HOOK_SCRIPT" 2>&1 >/dev/null)
+if echo "$STDERR" | grep -q "\[codo-hook\]"; then
+    pass "CODO_DEBUG_HOOKS=1 → stderr has debug output"
+else
+    fail "CODO_DEBUG_HOOKS=1 → stderr has debug output" "stderr='$STDERR'"
+fi
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
