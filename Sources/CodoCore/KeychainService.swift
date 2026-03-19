@@ -3,7 +3,7 @@ import Security
 
 /// Reads and writes the API key from macOS Keychain.
 public enum KeychainService {
-    private static let service = "ai.hexly.codo.01"
+    private static let service = "ai.hexly.codo.02"
     private static let account = "guardian-api-key"
 
     public static func readAPIKey() -> String? {

@@ -4,7 +4,7 @@ import os
 import ServiceManagement
 import UserNotifications
 
-private let logger = Logger(subsystem: "ai.hexly.codo.01", category: "app")
+private let logger = Logger(subsystem: "ai.hexly.codo.02", category: "app")
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
@@ -176,11 +176,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func spawnGuardianIfNeeded() {
-        guard guardianSettings.guardianEnabled,
-              let apiKey = KeychainService.readAPIKey(),
-              !apiKey.isEmpty,
-              let guardianPath = GuardianPathResolver.resolve(),
-              let bunPath = GuardianProcess.resolveBunPath(),
+        let enabled = guardianSettings.guardianEnabled
+        let apiKey = KeychainService.readAPIKey()
+        let guardianPath = GuardianPathResolver.resolve()
+        let bunPath = GuardianProcess.resolveBunPath()
+
+        let hasKey = apiKey != nil && !(apiKey ?? "").isEmpty
+        fputs("spawnGuardian: en=\(enabled) key=\(hasKey) "
+            + "guard=\(guardianPath ?? "nil") bun=\(bunPath ?? "nil") "
+            + "svc=\(self.notificationService != nil)\n", stderr)
+
+        guard enabled,
+              let apiKey, !apiKey.isEmpty,
+              let guardianPath,
+              let bunPath,
               let service = notificationService else { return }
 
         let proc = GuardianProcess(

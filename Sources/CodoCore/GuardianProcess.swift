@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-private let logger = Logger(subsystem: "ai.hexly.codo.01", category: "guardian")
+private let logger = Logger(subsystem: "ai.hexly.codo.02", category: "guardian")
 
 /// Manages the Guardian child process lifecycle.
 ///
