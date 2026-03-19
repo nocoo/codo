@@ -118,7 +118,7 @@ struct GuardianSettingsTests {
         let info = GuardianSettings.providerInfo(for: "anthropic")
         #expect(info != nil)
         #expect(info?.sdkType == .anthropic)
-        #expect(info?.baseURL == "https://api.anthropic.com/v1")
+        #expect(info?.baseURL == "https://api.anthropic.com")
         #expect(info?.defaultModel == "claude-sonnet-4-20250514")
     }
 

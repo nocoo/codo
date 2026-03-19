@@ -32,7 +32,7 @@ export const AI_PROVIDERS: Record<
   anthropic: {
     id: "anthropic",
     label: "Anthropic",
-    baseURL: "https://api.anthropic.com/v1",
+    baseURL: "https://api.anthropic.com",
     sdkType: "anthropic",
     models: ["claude-sonnet-4-20250514"],
     defaultModel: "claude-sonnet-4-20250514",
@@ -40,7 +40,7 @@ export const AI_PROVIDERS: Record<
   minimax: {
     id: "minimax",
     label: "MiniMax",
-    baseURL: "https://api.minimaxi.com/anthropic/v1",
+    baseURL: "https://api.minimaxi.com/anthropic",
     sdkType: "anthropic",
     models: ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1"],
     defaultModel: "MiniMax-M2.7",
@@ -48,7 +48,7 @@ export const AI_PROVIDERS: Record<
   glm: {
     id: "glm",
     label: "GLM (Zhipu)",
-    baseURL: "https://open.bigmodel.cn/api/anthropic/v1",
+    baseURL: "https://open.bigmodel.cn/api/anthropic",
     sdkType: "anthropic",
     models: ["glm-5", "glm-4.7"],
     defaultModel: "glm-5",

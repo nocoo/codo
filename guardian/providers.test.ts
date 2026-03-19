@@ -78,7 +78,7 @@ describe("resolveProviderConfig", () => {
       apiKey: "sk-test",
       model: "claude-sonnet-4-20250514",
     });
-    expect(resolved.baseURL).toBe("https://api.anthropic.com/v1");
+    expect(resolved.baseURL).toBe("https://api.anthropic.com");
     expect(resolved.sdkType).toBe("anthropic");
     expect(resolved.model).toBe("claude-sonnet-4-20250514");
   });
