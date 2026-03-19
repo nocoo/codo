@@ -1,0 +1,10 @@
+{
+  "name": "codo-guardian",
+  "version": "0.1.0",
+  "description": "AI Guardian process for Codo",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "openai": "^4.70.0"
+  }
+}
