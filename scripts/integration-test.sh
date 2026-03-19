@@ -448,6 +448,28 @@ else
     fail "CODO_DEBUG_HOOKS=1 → stderr has debug output" "stderr='$STDERR'"
 fi
 
+# Test: pretty-printed JSON with spaces around colon
+echo '{"hook_event_name": "Stop", "session_id": "s1", "last_assistant_message": "Done"}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"stop"'; then
+    pass "pretty-printed JSON → _hook:stop roundtrip"
+else
+    fail "pretty-printed JSON → _hook:stop roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
+# Test: multiline JSON with spaces around colon
+printf '{\n  "hook_event_name": "Notification",\n  "session_id": "s1",\n  "title": "Perm"\n}' \
+  | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
+EXIT=$?
+LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"notification"'; then
+    pass "multiline JSON → _hook:notification roundtrip"
+else
+    fail "multiline JSON → _hook:notification roundtrip" "exit=$EXIT last='$LAST'"
+fi
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -35,8 +35,8 @@ if [ -z "$INPUT" ]; then
 fi
 
 # --- Extract hook_event_name (no jq dependency) ---
-# Matches "hook_event_name":"<value>" in JSON
-EVENT_NAME=$(echo "$INPUT" | grep -o '"hook_event_name":"[^"]*"' | head -1 | grep -o ':"[^"]*"' | tr -d ':"')
+# Tolerates optional whitespace around colon (compact, pretty-printed, or multiline JSON)
+EVENT_NAME=$(echo "$INPUT" | grep -oE '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
 
 if [ -z "$EVENT_NAME" ]; then
   debug "no hook_event_name found, skipping"
