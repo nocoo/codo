@@ -1,8 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// A single project row in the sidebar.
+/// A single project row in the sidebar with logo picker.
 struct ProjectRow: View {
     let project: ProjectInfo
+    @Environment(DashboardStore.self) private var store
+    @State private var showImagePicker = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -19,6 +22,25 @@ struct ProjectRow: View {
             }
         }
         .padding(.vertical, 2)
+        .contextMenu {
+            Button("Set Logo...") {
+                showImagePicker = true
+            }
+            if project.customLogoPath != nil {
+                Button("Remove Logo") {
+                    store.setProjectLogo(for: project.id, imageURL: URL(fileURLWithPath: "/dev/null"))
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showImagePicker,
+            allowedContentTypes: [.png, .jpeg, .heic],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                store.setProjectLogo(for: project.id, imageURL: url)
+            }
+        }
     }
 
     @ViewBuilder
