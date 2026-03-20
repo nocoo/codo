@@ -41,39 +41,41 @@ public final class BannerProvider: NotificationProvider, @unchecked Sendable {
 // MARK: - Design Tokens
 
 private enum Banner {
-    static let maxWidth: CGFloat = 380
+    static let maxWidth: CGFloat = 360
     static let minHeight: CGFloat = 72
-    static let cornerRadius: CGFloat = 14
-    static let screenMargin: CGFloat = 16
+    static let cornerRadius: CGFloat = 18
+    static let screenMargin: CGFloat = 12
 
     // Content insets
-    static let paddingH: CGFloat = 16
-    static let paddingTop: CGFloat = 12
-    static let paddingBottom: CGFloat = 14
+    static let paddingH: CGFloat = 14
+    static let paddingTop: CGFloat = 10
+    static let paddingBottom: CGFloat = 12
 
-    // Icon — first row, next to project name
-    static let iconSize: CGFloat = 36
-    static let iconCornerRadius: CGFloat = 8
-    static let iconTextGap: CGFloat = 10
+    // Icon — header row, small icon next to app name
+    static let iconSize: CGFloat = 20
+    static let iconCornerRadius: CGFloat = 5
+    static let iconTextGap: CGFloat = 6
 
     // Spacing between rows
-    static let headerContentGap: CGFloat = 8    // header row → title
-    static let titleBodyGap: CGFloat = 3        // title → body
+    static let headerContentGap: CGFloat = 6    // header row → title
+    static let titleBodyGap: CGFloat = 2        // title → body
 
     // Timing
     static let displayDuration: TimeInterval = 5.0
-    static let slideInDuration: TimeInterval = 0.35
-    static let slideOutDuration: TimeInterval = 0.25
+    static let slideInDuration: TimeInterval = 0.3
+    static let slideOutDuration: TimeInterval = 0.2
 
     // Typography
-    static let projectFont = NSFont.systemFont(ofSize: 13, weight: .medium)
-    static let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
+    static let projectFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    static let titleFont = NSFont.systemFont(ofSize: 14, weight: .bold)
     static let bodyFont = NSFont.systemFont(ofSize: 13, weight: .regular)
+    static let timestampFont = NSFont.systemFont(ofSize: 12, weight: .regular)
 
     // Colors
     static let projectColor = NSColor.secondaryLabelColor
     static let titleColor = NSColor.labelColor
     static let bodyColor = NSColor.secondaryLabelColor
+    static let timestampColor = NSColor.tertiaryLabelColor
 }
 
 // MARK: - BannerWindow
@@ -121,7 +123,7 @@ private final class BannerWindow: NSPanel {
         let size = frame.size
 
         let targetX = visibleFrame.maxX - size.width - Banner.screenMargin
-        let posY = visibleFrame.minY + Banner.screenMargin
+        let posY = visibleFrame.maxY - size.height - Banner.screenMargin
         let targetOrigin = NSPoint(x: targetX, y: posY)
         slideOutOrigin = NSPoint(x: visibleFrame.maxX + 20, y: posY)
 
@@ -181,20 +183,20 @@ private final class BannerContentView: NSView {
         let shadowLayer = layer ?? CALayer()
         if layer == nil { layer = shadowLayer }
         shadowLayer.shadowColor = NSColor.black.cgColor
-        shadowLayer.shadowOpacity = 0.18
-        shadowLayer.shadowRadius = 24
-        shadowLayer.shadowOffset = CGSize(width: 0, height: -6)
+        shadowLayer.shadowOpacity = 0.12
+        shadowLayer.shadowRadius = 30
+        shadowLayer.shadowOffset = CGSize(width: 0, height: -4)
 
         // ── Frosted glass background ──
         let glass = NSVisualEffectView()
-        glass.material = .popover
+        glass.material = .hudWindow
         glass.state = .active
         glass.blendingMode = .behindWindow
         glass.wantsLayer = true
         glass.layer?.cornerRadius = Banner.cornerRadius
         glass.layer?.masksToBounds = true
         glass.layer?.borderWidth = 0.5
-        glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        glass.layer?.borderColor = NSColor.separatorColor.cgColor
         addSubview(glass)
 
         // ── Row 1: App icon + project name ──
@@ -217,6 +219,16 @@ private final class BannerContentView: NSView {
             wraps: false
         )
         addSubview(projectLabel)
+
+        // ── "now" timestamp (right-aligned in header) ──
+        let timestampLabel = makeLabel(
+            "now",
+            font: Banner.timestampFont,
+            color: Banner.timestampColor,
+            maxLines: 1,
+            wraps: false
+        )
+        addSubview(timestampLabel)
 
         // ── Row 2: Title ──
         let titleLabel = makeLabel(
@@ -244,8 +256,7 @@ private final class BannerContentView: NSView {
 
         activateLayout(
             glass: glass,
-            iconView: iconView,
-            projectLabel: projectLabel,
+            header: HeaderViews(icon: iconView, project: projectLabel, timestamp: timestampLabel),
             titleLabel: titleLabel,
             bodyLabel: bodyLabel
         )
@@ -256,14 +267,23 @@ private final class BannerContentView: NSView {
 
     // MARK: - Layout
 
+    private struct HeaderViews {
+        let icon: NSView
+        let project: NSView
+        let timestamp: NSView
+    }
+
     private func activateLayout(
         glass: NSView,
-        iconView: NSView,
-        projectLabel: NSView,
+        header: HeaderViews,
         titleLabel: NSView,
         bodyLabel: NSTextField?
     ) {
-        for view in [glass, iconView, projectLabel, titleLabel] as [NSView] {
+        let iconView = header.icon
+        let projectLabel = header.project
+        let timestampLabel = header.timestamp
+
+        for view in [glass, iconView, projectLabel, timestampLabel, titleLabel] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
         }
         bodyLabel?.translatesAutoresizingMaskIntoConstraints = false
@@ -277,7 +297,7 @@ private final class BannerContentView: NSView {
             glass.topAnchor.constraint(equalTo: topAnchor),
             glass.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // Row 1: icon (left) + project name (center-Y aligned to icon)
+            // Row 1: [icon] [gap] AppName ── (spring) ── now
             iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             iconView.topAnchor.constraint(equalTo: topAnchor, constant: Banner.paddingTop),
             iconView.widthAnchor.constraint(equalToConstant: Banner.iconSize),
@@ -286,8 +306,13 @@ private final class BannerContentView: NSView {
             projectLabel.leadingAnchor.constraint(
                 equalTo: iconView.trailingAnchor, constant: Banner.iconTextGap),
             projectLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+
+            // Timestamp right-aligned, same baseline as project name
+            timestampLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            timestampLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+            // Spring: project label doesn't overlap timestamp
             projectLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: trailingAnchor, constant: -pad),
+                lessThanOrEqualTo: timestampLabel.leadingAnchor, constant: -6),
 
             // Row 2: title — full width below header row
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
