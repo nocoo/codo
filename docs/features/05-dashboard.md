@@ -237,7 +237,25 @@ Content: `NSSplitViewController` with 2 items:
 
 Hybrid Dock toggle in `showWindow()` / `windowWillClose(_:)`.
 
-Pass `DashboardStore` + `SettingsViewModel` into SwiftUI via `.environment()`.
+Pass `DashboardStore` via `.environment()` (Observation framework) and `SettingsViewModel` via `.environmentObject()` (Combine `ObservableObject`) into SwiftUI root views。**`SettingsViewModel` 全局仅一个实例**，由 `MainWindowController` 持有：
+
+```swift
+// MainWindowController
+private let settingsViewModel = SettingsViewModel()
+
+// 构建 NSHostingView 时:
+let sidebarView = SidebarView(...)
+    .environmentObject(settingsViewModel)
+    .environment(dashboardStore)
+
+let detailView = DetailContainerView(...)
+    .environmentObject(settingsViewModel)
+    .environment(dashboardStore)
+```
+
+注意两种注入方式的区别：
+- `DashboardStore` 是 `@Observable`（macOS 14+ Observation）→ 用 `.environment()`
+- `SettingsViewModel` 是 `ObservableObject`（Combine）→ 用 `.environmentObject()`
 
 #### 2b. `Sources/Codo/Dashboard/Views/SidebarView.swift` — NEW
 
@@ -312,7 +330,7 @@ Three stat numbers: Sent / Suppressed / Active Sessions. Today's counts.
 
 #### 4a. `Sources/Codo/Dashboard/Views/SettingsView.swift` — NEW
 
-SwiftUI Form wrapping existing `SettingsViewModel` (`@StateObject`).
+SwiftUI Form，通过 `@EnvironmentObject var viewModel: SettingsViewModel` 获取实例（由 `MainWindowController` 在 Phase 2a 注入，全局唯一实例）。**不使用 `@StateObject`**，避免创建重复实例导致状态不同步。
 
 Fields (identical to current):
 
