@@ -64,7 +64,7 @@ GuardianProcess.readStdoutLoop() → GuardianAction
   └─ action == "suppress" → no-op                   (unchanged)
 ```
 
-`cwd` 字段在所有 hook event 中可用（`session-start`, `stop`, `post-tool-use` 等）。已被 Guardian TypeScript 层用于 session 追踪（`guardian/state.ts`）。
+`cwd` 字段在大多数 hook event 中可用（`session-start`, `stop`, `post-tool-use` 等），但 **`session-end` 可能没有 `cwd` 字段**。因此 `HookEvent.cwd` 必须是 `String?`。处理 `session-end` 时需通过 `session_id` 查找对应的已知 session 来获取 cwd/项目信息，不能假设 `cwd` 一定存在。
 
 ---
 
@@ -74,17 +74,29 @@ GuardianProcess.readStdoutLoop() → GuardianAction
 
 #### 1a. `Sources/CodoCore/HookEvent.swift` — NEW
 
-Lightweight decode of hook JSON（只取需要的字段，`init(from:)` 不会因多余字段报错）：
+Lightweight decode of hook JSON。**必须使用显式 CodingKeys**，因为实际 payload 的 key 是 `_hook`、`session_id`、`hook_event_name`（下划线前缀 + snake_case），`keyDecodingStrategy = .convertFromSnakeCase` 无法正确处理 `_hook`（会转为 `Hook` 而非 `hook`）。
 
 ```swift
 public struct HookEvent: Decodable, Sendable {
-    public let hook: String          // "_hook"
-    public let sessionId: String?    // "session_id"
+    public let hook: String
+    public let sessionId: String?
     public let cwd: String?
     public let model: String?
-    public let hookEventName: String? // "hook_event_name"
+    public let hookEventName: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case hook = "_hook"
+        case sessionId = "session_id"
+        case cwd
+        case model
+        case hookEventName = "hook_event_name"
+    }
 }
 ```
+
+Decoder 必须使用默认 `keyDecodingStrategy`（不设 `.convertFromSnakeCase`），依赖 CodingKeys 做精确映射。多余字段会被自动忽略（Decodable 默认行为）。
+
+**测试覆盖**：`Tests/CodoCoreTests/HookEventTests.swift` — 用实际 payload fixture 验证 decode 正确性（包括 `_hook` 前缀、`session_id` snake_case、缺失可选字段的情况）。
 
 #### 1b. `Sources/Codo/Dashboard/Models/` — NEW
 
@@ -116,9 +128,33 @@ public struct HookEvent: Decodable, Sendable {
 
 | Method | Trigger |
 |--------|---------|
-| `ingestHookEvent(_ event: HookEvent)` | AppDelegate tap on dispatchHookEvent |
+| `ingestHookEvent(_ event: HookEvent)` | AppDelegate tap on dispatchHookEvent. 对于 `session-end`（可能没有 `cwd`），通过 `event.sessionId` 在 `activeSessions` 中查找对应 session 来获取 `cwd`/项目信息 |
 | `ingestGuardianAction(_ action: GuardianAction)` | GuardianProcess.onAction callback |
-| `startPolling(guardian:socketServer:)` | Called once from AppDelegate after daemon starts |
+| `startPolling(guardianProvider:socketServer:)` | Called once from AppDelegate after daemon starts |
+
+**Guardian 引用策略**：`startPolling` 接受的 `guardianProvider` 参数类型为 `() -> GuardianProvider?`（closure，不是直接引用）。因为 `AppDelegate` 会在 `settingsDidSave` 时 stop 旧 guardian 再 spawn 新 guardian，直接持有实例引用会指向已 stop 的旧进程。改为 closure 让每次 poll 都从 `AppDelegate.guardian` 取最新实例：
+
+```swift
+func startPolling(
+    guardianProvider: @escaping () -> GuardianProvider?,
+    socketServer: SocketServer?
+) {
+    Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        guard let self else { return }
+        self.guardianAlive = guardianProvider()?.isAlive ?? false
+        self.socketAlive = socketServer?.isListening ?? false
+        // ...
+    }
+}
+```
+
+AppDelegate 调用时：
+```swift
+dashboardStore.startPolling(
+    guardianProvider: { [weak self] in self?.guardian },
+    socketServer: socketServer
+)
+```
 
 #### 1d. `Sources/CodoCore/GuardianProcess.swift` — MODIFY (~5 lines)
 
@@ -137,7 +173,7 @@ DispatchQueue.main.async { [weak self] in
 - Add `private let dashboardStore = DashboardStore()`
 - In `dispatchHookEvent(rawJSON:)`: decode → `HookEvent`, call `dashboardStore.ingestHookEvent()`
 - In `spawnGuardianIfNeeded()`: connect `proc.onAction = { dashboardStore.ingestGuardianAction($0) }`
-- After `startDaemon()`: call `dashboardStore.startPolling(guardian:socketServer:)`
+- After `startDaemon()`: call `dashboardStore.startPolling(guardianProvider: { [weak self] in self?.guardian }, socketServer: socketServer)`
 - Replace `settingsWindow: SettingsWindowController?` → `mainWindow: MainWindowController?`
 - Replace `openSettings()` → `openDashboard()`
 - Menu item: "Settings..." Cmd+, → "Dashboard..." Cmd+D
@@ -280,10 +316,13 @@ Project row for sidebar: logo image (64×64) + name + relative time badge.
 
 #### 5c. Project Logo Storage
 
-- Path: `~/.codo/project-logos/<sanitized-name>.png`
+- Path: `~/.codo/project-logos/<sha256-of-cwd-prefix-8>.png`
+  - 用 cwd 绝对路径的 SHA256 前 8 位作为文件名，而不是 basename
+  - 原因：两个不同路径但 basename 相同的项目（如 `/work/app` 和 `/personal/app`）必须有独立 logo
+  - `ProjectInfo.id` 是 cwd path，logo 文件名也基于 cwd path 派生，保持键一致
 - Picker: `fileImporter(isPresented:allowedContentTypes:)` in SwiftUI
 - Save: resize to 64×64 PNG
-- Model: `ProjectInfo.customLogoPath` stores path
+- Model: `ProjectInfo.customLogoPath` stores full path to logo file
 
 **Atomic commit**: Phase 5 result = Logs 实时查看 + 项目 logo 自定义。
 
@@ -360,13 +399,23 @@ open .build/release/Codo.app
 # 1. Dashboard opens via menubar → "Dashboard..." (Cmd+D)
 #    → Three-panel layout, Dock icon appears
 
-# 2. Live event flow
-echo '{"title":"Test","body":"Hello","source":"codo"}' | bun ~/.codo/codo.ts
-#    → Event appears in LiveEventStream
+# 2. Live event flow — test with a HOOK event (not plain notification)
+#    Plain notification (echo '{"title":...}') goes through notification path,
+#    NOT through dispatchHookEvent, so it won't appear in LiveEventStream.
+#    Use a hook event payload instead:
+echo '{"_hook":"stop","session_id":"test-123","cwd":"/tmp/test-project","hook_event_name":"Stop","last_assistant_message":"All done"}' | bun ~/.codo/codo.ts
+#    → Event appears in LiveEventStream with project "test-project"
+#    → If Guardian is alive, Guardian will also process and may send a notification
+
+# 2b. Direct notification path (verifies banner still works, NOT event stream)
+echo '{"title":"Banner Test","body":"This is a direct notification","source":"codo"}' | bun ~/.codo/codo.ts
+#    → Banner notification appears (this does NOT feed into LiveEventStream)
 
 # 3. Session tracking
-#    Start Claude Code session → session-start hook fires
-#    → Project auto-discovered in sidebar, session in ActiveSessionsList
+echo '{"_hook":"session-start","session_id":"s-abc","cwd":"/Users/nocoo/workspace/personal/codo","model":"claude-sonnet-4-6","hook_event_name":"SessionStart"}' | bun ~/.codo/codo.ts
+#    → Project "codo" auto-discovered in sidebar, session in ActiveSessionsList
+echo '{"_hook":"session-end","session_id":"s-abc","hook_event_name":"SessionEnd"}' | bun ~/.codo/codo.ts
+#    → Session removed from ActiveSessionsList (note: session-end may lack cwd)
 
 # 4. Settings
 #    Navigate to Settings, change provider, save
@@ -379,3 +428,12 @@ echo '{"title":"Test","body":"Hello","source":"codo"}' | bun ~/.codo/codo.ts
 # 6. All tests pass
 swift test && bun test && cd cli && bun test
 ```
+
+### Data Path Clarification
+
+Two distinct paths exist and must be tested separately:
+
+| Path | Trigger | Dashboard Effect |
+|------|---------|-----------------|
+| **Hook event** | JSON with `_hook` field → `MessageRouter.hookEvent` → `dispatchHookEvent` | ✅ Feeds into `DashboardStore.ingestHookEvent()` → LiveEventStream, Sessions, Projects |
+| **Direct notification** | JSON without `_hook` (has `title`) → `MessageRouter.notification` → `notificationService.post()` | ❌ Does NOT feed into DashboardStore — goes straight to banner |
