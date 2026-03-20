@@ -29,11 +29,13 @@ struct GuardianStatusCard: View {
             Circle()
                 .fill(alive ? Color.green : Color.red)
                 .frame(width: 8, height: 8)
+                .animation(.easeInOut(duration: 0.3), value: alive)
             Text(label)
                 .font(.system(.body, weight: .medium))
             Text(alive ? "Running" : "Stopped")
                 .foregroundStyle(.secondary)
                 .font(.callout)
+                .contentTransition(.numericText())
             if let detail {
                 Spacer()
                 Text(detail)

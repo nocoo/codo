@@ -24,6 +24,7 @@ struct SidebarView: View {
                             : Color.clear
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .animation(.easeInOut(duration: 0.15), value: selectedNav)
                 }
             }
 

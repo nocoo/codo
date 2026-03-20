@@ -18,6 +18,8 @@ struct StatsCard: View {
         VStack(spacing: 2) {
             Text("\(value)")
                 .font(.system(.title2, weight: .bold).monospacedDigit())
+                .contentTransition(.numericText())
+                .animation(.easeInOut(duration: 0.3), value: value)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)

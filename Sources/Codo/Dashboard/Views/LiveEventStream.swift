@@ -7,11 +7,16 @@ struct LiveEventStream: View {
     var body: some View {
         CardView(title: "Event Stream") {
             if store.events.isEmpty {
-                Text("Waiting for events...")
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 8)
+                VStack(spacing: 6) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.quaternary)
+                    Text("Waiting for events...")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 12)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
