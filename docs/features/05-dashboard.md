@@ -159,14 +159,16 @@ dashboardStore.startPolling(
 #### 1d. `Sources/CodoCore/GuardianProcess.swift` — MODIFY (~5 lines)
 
 ```swift
-// New property
-public var onAction: ((GuardianAction) -> Void)?
+// New property — nonisolated closure, 由调用方负责线程安全
+public var onAction: (@Sendable (GuardianAction) -> Void)?
 
 // In readStdoutLoop(), after successful decode of action:
-DispatchQueue.main.async { [weak self] in
-    self?.onAction?(action)
-}
+// 注意：直接在 stdout reader 线程回调，不做 main thread hop
+// 调用方（AppDelegate）在赋值闭包内自行 hop 到 @MainActor
+self?.onAction?(action)
 ```
+
+`onAction` 标记 `@Sendable` 而非 `@MainActor`，因为 `GuardianProcess` 属于 `CodoCore` 底层模块，不应感知上层的 actor 隔离策略。线程跳转责任在调用方。
 
 #### 1d2. `Sources/CodoCore/SocketServer.swift` — MODIFY (~1 line)
 
@@ -195,7 +197,14 @@ public var isListening: Bool { running }
       }
   }
   ```
-- In `spawnGuardianIfNeeded()`: connect `proc.onAction = { dashboardStore.ingestGuardianAction($0) }`
+- In `spawnGuardianIfNeeded()`: connect onAction — **必须在闭包内 hop 到 `@MainActor`**，因为 `onAction` 是 `@Sendable` nonisolated 闭包，从 stdout reader 线程回调，不能直接调用 `@MainActor` 的 `dashboardStore`：
+  ```swift
+  proc.onAction = { [weak self] action in
+      Task { @MainActor in
+          self?.dashboardStore.ingestGuardianAction(action)
+      }
+  }
+  ```
 - After `startDaemon()`: call `dashboardStore.startPolling(guardianProvider: { [weak self] in self?.guardian }, socketServer: socketServer)`
 - Replace `settingsWindow: SettingsWindowController?` → `mainWindow: MainWindowController?`
 - Replace `openSettings()` → `openDashboard()`
@@ -206,7 +215,7 @@ public var isListening: Bool { running }
 **线程安全总结**：`DashboardStore` 标记 `@MainActor`，所有写入入口必须在主线程：
 - `startPolling` Timer — `Timer.scheduledTimer` 默认在 main RunLoop 触发 ✅
 - `ingestHookEvent()` — 由 `dispatchHookEvent` 通过 `Task { @MainActor in }` 跳转 ✅
-- `ingestGuardianAction()` — 由 `GuardianProcess.onAction` 通过 `DispatchQueue.main.async` 跳转 ✅
+- `ingestGuardianAction()` — 由 `onAction` 闭包内部 `Task { @MainActor in }` 跳转 ✅（`GuardianProcess` 不做 hop，调用方负责）
 
 ---
 
