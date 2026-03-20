@@ -70,7 +70,7 @@ GuardianProcess.readStdoutLoop() → GuardianAction
 
 ## Implementation Phases
 
-### Phase 1: Data Layer
+### Phase 1: Data Layer ✅
 
 #### 1a. `Sources/CodoCore/HookEvent.swift` — NEW
 
@@ -210,7 +210,7 @@ public var isListening: Bool { running }
 - Replace `openSettings()` → `openDashboard()`
 - Menu item: "Settings..." Cmd+, → "Dashboard..." Cmd+D
 
-**Atomic commit**: Phase 1 result = 编译通过，数据层就绪，无 UI 变化。
+**Atomic commit**: `14fee1f` — Phase 1 完成（与 Phase 2/3 合并提交）。
 
 **线程安全总结**：`DashboardStore` 标记 `@MainActor`，所有写入入口必须在主线程：
 - `startPolling` Timer — `Timer.scheduledTimer` 默认在 main RunLoop 触发 ✅
@@ -219,7 +219,7 @@ public var isListening: Bool { running }
 
 ---
 
-### Phase 2: Window Shell
+### Phase 2: Window Shell ✅
 
 #### 2a. `Sources/Codo/Dashboard/MainWindowController.swift` — NEW
 
@@ -282,11 +282,11 @@ case .logs:      LogsView()
 }
 ```
 
-**Atomic commit**: Phase 2 result = 三栏窗口骨架可显示，sidebar 导航可切换，detail 区域有 placeholder。
+**Atomic commit**: `14fee1f` — Phase 2 与 Phase 1/3 合并提交。
 
 ---
 
-### Phase 3: Dashboard Cards
+### Phase 3: Dashboard Cards ✅
 
 #### 3a. `Sources/Codo/Dashboard/Views/CardView.swift` — NEW
 
@@ -322,11 +322,11 @@ Three stat numbers: Sent / Suppressed / Active Sessions. Today's counts.
 - Auto-scroll to newest event
 - Conversation-flow style (inspired by the reference screenshot)
 
-**Atomic commit**: Phase 3 result = Dashboard 页面完整可用，实时数据展示。
+**Atomic commit**: `14fee1f` — Phase 3 与 Phase 1/2 合并提交。
 
 ---
 
-### Phase 4: Settings Migration
+### Phase 4: Settings Migration ✅
 
 #### 4a. `Sources/Codo/Dashboard/Views/SettingsView.swift` — NEW
 
@@ -351,11 +351,11 @@ Save → `viewModel.save()` + post `settingsDidSave` notification (reuse existin
 
 Move `SettingsWindowController.settingsDidSave` notification name constant to `SettingsViewModel`.
 
-**Atomic commit**: Phase 4 result = Settings 功能完全迁移到 SwiftUI，旧 AppKit 设置窗口删除。
+**Atomic commit**: `4a92967` — Settings 功能完全迁移到 SwiftUI，旧 AppKit 设置窗口删除。
 
 ---
 
-### Phase 5: Logs + Projects
+### Phase 5: Logs + Projects ✅
 
 #### 5a. `Sources/Codo/Dashboard/Views/LogsView.swift` — NEW
 
@@ -379,20 +379,21 @@ Project row for sidebar: logo image (64×64) + name + relative time badge.
 - Save: resize to 64×64 PNG
 - Model: `ProjectInfo.customLogoPath` stores full path to logo file
 
-**Atomic commit**: Phase 5 result = Logs 实时查看 + 项目 logo 自定义。
+**Atomic commit**: `39e0296` — Logs 实时查看 + 项目 logo 自定义。
 
 ---
 
-### Phase 6: Polish
+### Phase 6: Polish ✅
 
-- Window frame autosave (`setFrameAutosaveName`)
-- Keyboard shortcuts: Cmd+1/2/3 nav switch
-- Dark theme enforcement or system-following
-- Animations: sidebar selection, card appear, event stream scroll
-- Empty states with placeholder illustrations
-- Status bar icon animation when Guardian is processing
+- ✅ Window frame autosave (`setFrameAutosaveName`) — done in Phase 2
+- ✅ Keyboard shortcuts: Cmd+1/2/3 nav switch via hidden buttons in DetailContainerView
+- ✅ Dark theme: follows system via `.windowBackgroundColor`
+- ✅ Animations: sidebar selection transition, card fade-in on appear, status dot color transition, stat counter numericText transition, opacity transition on nav switch
+- ✅ Empty states: SF Symbol illustrations for ActiveSessionsList (terminal) and LiveEventStream (waveform.path)
+- ✅ Pulsing green dot for active sessions (scaleEffect + shadow animation)
+- ⊘ Status bar icon animation — skipped (low value, menubar icon is static template)
 
-**Atomic commit**: Phase 6 result = 视觉打磨，交互细节完善。
+**Atomic commit**: `9a4e4ef` — Phase 6 result = 视觉打磨，交互细节完善。
 
 ---
 
