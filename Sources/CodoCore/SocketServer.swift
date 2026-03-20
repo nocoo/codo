@@ -16,6 +16,9 @@ public final class SocketServer: Sendable {
     private nonisolated(unsafe) var serverSocket: Int32 = -1
     private nonisolated(unsafe) var running = false
 
+    /// Whether the server is currently listening for connections.
+    public var isListening: Bool { running }
+
     /// Maximum payload size: 64KB
     public static let maxPayloadSize = 65_536
 

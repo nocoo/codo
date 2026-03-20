@@ -24,6 +24,10 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     private var lastConfig: [String: String]?
     private let crashBreaker: CrashLoopBreaker
 
+    /// Called on the stdout reader thread when Guardian emits an action.
+    /// Caller is responsible for thread-hopping (e.g. Task { @MainActor in }).
+    public var onAction: (@Sendable (GuardianAction) -> Void)?
+
     /// Called on main queue when Guardian gives up after repeated crashes.
     public var onDisabled: (() -> Void)? {
         didSet {
@@ -217,6 +221,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
                 do {
                     let action = try decoder.decode(GuardianAction.self, from: Data(lineData))
+                    onAction?(action)
                     if action.action == "send", let notification = action.notification {
                         // Post notification asynchronously
                         Task {

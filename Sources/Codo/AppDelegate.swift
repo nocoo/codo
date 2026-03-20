@@ -14,8 +14,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // Guardian
     private var guardian: GuardianProcess?
     private let guardianSettings = GuardianSettings()
-    private var settingsWindow: SettingsWindowController?
+    private var mainWindow: MainWindowController?
     private var guardianToggleItem: NSMenuItem?
+
+    // Dashboard — initialized lazily on main thread in applicationDidFinishLaunching
+    private var dashboardStore: DashboardStore!
 
     private let socketDir = "\(NSHomeDirectory())/.codo"
     private var socketPath: String { "\(socketDir)/codo.sock" }
@@ -23,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - App Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        dashboardStore = DashboardStore()
         setupStatusItem()
         setupMenu()
         UNUserNotificationCenter.current().delegate = self
@@ -30,10 +34,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         startDaemon()
         spawnGuardianIfNeeded()
 
+        dashboardStore.startPolling(
+            guardianProvider: { [weak self] in self?.guardian },
+            socketServer: socketServer
+        )
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(settingsDidSave),
-            name: SettingsWindowController.settingsDidSave,
+            name: SettingsViewModel.settingsDidSave,
             object: nil
         )
     }
@@ -89,9 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guardianToggleItem = toggleItem
 
         let settingsItem = NSMenuItem(
-            title: "Settings...",
-            action: #selector(openSettings),
-            keyEquivalent: ","
+            title: "Dashboard...",
+            action: #selector(openDashboard),
+            keyEquivalent: "d"
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -168,11 +177,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         spawnGuardianIfNeeded()
     }
 
-    @objc private func openSettings() {
-        if settingsWindow == nil {
-            settingsWindow = SettingsWindowController()
+    @objc private func openDashboard() {
+        if mainWindow == nil {
+            mainWindow = MainWindowController(
+                dashboardStore: dashboardStore,
+                settingsViewModel: SettingsViewModel()
+            )
         }
-        settingsWindow?.showWindow()
+        mainWindow?.showDashboard()
     }
 
     private func spawnGuardianIfNeeded() {
@@ -201,6 +213,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self?.guardianToggleItem?.state = .off
             self?.guardianSettings.guardianEnabled = false
             logger.warning("Guardian disabled after repeated crashes")
+        }
+        proc.onAction = { [weak self] action in
+            Task { @MainActor in
+                self?.dashboardStore.ingestGuardianAction(action)
+            }
         }
         do {
             try proc.start(config: guardianSettings.toEnvironment(apiKey: apiKey))
@@ -253,6 +270,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func dispatchHookEvent(rawJSON: Data) {
+        // Tap for dashboard: decode and ingest on main thread
+        if let event = try? JSONDecoder().decode(HookEvent.self, from: rawJSON) {
+            Task { @MainActor [weak self] in
+                self?.dashboardStore.ingestHookEvent(event)
+            }
+        }
+
         if let guardian, guardian.isAlive {
             Task.detached { await guardian.send(line: rawJSON) }
         } else {

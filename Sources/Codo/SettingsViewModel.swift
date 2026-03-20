@@ -6,6 +6,9 @@ import Foundation
 /// with @Published properties for two-way binding.
 /// Lives in app target to keep CodoCore free of Combine imports.
 final class SettingsViewModel: ObservableObject {
+    /// Posted after settings are persisted so AppDelegate can restart Guardian.
+    static let settingsDidSave = Notification.Name("CodoSettingsDidSave")
+
     @Published var guardianEnabled: Bool
     @Published var provider: String
     @Published var baseURL: String
