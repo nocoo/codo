@@ -214,16 +214,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - Daemon
 
     private func startDaemon() {
-        #if canImport(UserNotifications)
-        let provider = SystemNotificationProvider()
+        let provider = BannerProvider()
         notificationService = NotificationService(provider: provider)
-        #endif
 
         if let service = notificationService {
             Task { _ = await service.requestPermission() }
         }
 
-        socketServer = SocketServer(socketPath: socketPath, rawHandler: { [weak self] data in
+        socketServer = SocketServer(socketPath: socketPath, asyncRawHandler: { [weak self] data in
             guard let self else { return .error("shutting down") }
 
             let routed: RoutedMessage
@@ -235,7 +233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
             switch routed {
             case .notification(let message):
-                return self.handleNotification(message)
+                guard let service = self.notificationService else {
+                    return .error("notifications unavailable (no app bundle)")
+                }
+                return await service.post(message: message)
             case .hookEvent(_, let rawJSON):
                 self.dispatchHookEvent(rawJSON: rawJSON)
                 return .ok
@@ -249,20 +250,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             fputs("Failed to start socket server: \(error)\n", stderr)
             NSApplication.shared.terminate(nil)
         }
-    }
-
-    private func handleNotification(_ message: CodoMessage) -> CodoResponse {
-        guard let service = notificationService else {
-            return .error("notifications unavailable (no app bundle)")
-        }
-        let semaphore = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var result: CodoResponse = .error("timeout")
-        Task.detached {
-            result = await service.post(message: message)
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return result
     }
 
     private func dispatchHookEvent(rawJSON: Data) {

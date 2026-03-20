@@ -234,14 +234,22 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
     /// Background stderr reader. Forwards each line to os.Logger and log file.
     private static func readStderrLoop(pipe: Pipe) {
-        // Create log file immediately to verify this method runs
         let logPath = "\(NSHomeDirectory())/.codo/guardian.log"
-        FileManager.default.createFile(atPath: logPath, contents: Data("--- guardian stderr log started ---\n".utf8))
 
-        let handle = pipe.fileHandleForReading
-
+        // Open in append mode (create if missing)
+        let fileManager = FileManager.default
+        if !fileManager.fileExists(atPath: logPath) {
+            fileManager.createFile(atPath: logPath, contents: nil)
+        }
         guard let logHandle = FileHandle(forWritingAtPath: logPath) else { return }
         logHandle.seekToEndOfFile()
+
+        // Write startup marker
+        let marker = "--- guardian stderr log started ---\n"
+        logHandle.write(Data(marker.utf8))
+
+        let handle = pipe.fileHandleForReading
+        let dateFormatter = ISO8601DateFormatter()
 
         var buffer = Data()
 
@@ -261,7 +269,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
                 logger.notice("\(line, privacy: .public)")
                 // Also write to log file with timestamp
-                let logLine = "[\(ISO8601DateFormatter().string(from: Date()))] \(line)\n"
+                let logLine = "[\(dateFormatter.string(from: Date()))] \(line)\n"
                 logHandle.write(Data(logLine.utf8))
             }
         }
