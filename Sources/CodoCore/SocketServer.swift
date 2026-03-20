@@ -8,6 +8,9 @@ public final class SocketServer: Sendable {
     /// Handler called with raw bytes from the client. Returns a CodoResponse.
     public typealias RawMessageHandler = @Sendable (Data) -> CodoResponse
 
+    /// Async handler called with raw bytes from the client. Returns a CodoResponse.
+    public typealias AsyncRawMessageHandler = @Sendable (Data) async -> CodoResponse
+
     private let socketPath: String
     private let rawHandler: RawMessageHandler
     private nonisolated(unsafe) var serverSocket: Int32 = -1
@@ -40,6 +43,22 @@ public final class SocketServer: Sendable {
             } catch {
                 return .error("invalid json")
             }
+        }
+    }
+
+    /// Initialize with an async raw handler. The semaphore bridge is internalized here,
+    /// so callers can write pure async code while blocking socket I/O stays on GCD threads.
+    public init(socketPath: String, asyncRawHandler: @escaping AsyncRawMessageHandler) {
+        self.socketPath = socketPath
+        self.rawHandler = { data in
+            let semaphore = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var result: CodoResponse = .error("timeout")
+            Task {
+                result = await asyncRawHandler(data)
+                semaphore.signal()
+            }
+            semaphore.wait()
+            return result
         }
     }
 

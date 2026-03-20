@@ -5,6 +5,7 @@ public struct CodoMessage: Codable, Sendable {
     public let title: String
     public let body: String?
     public let subtitle: String?
+    public let source: String?      // project name (basename of cwd)
     public let sound: String?
     public let threadId: String?
 
@@ -12,12 +13,14 @@ public struct CodoMessage: Codable, Sendable {
         title: String,
         body: String? = nil,
         subtitle: String? = nil,
+        source: String? = nil,
         sound: String? = nil,
         threadId: String? = nil
     ) {
         self.title = title
         self.body = body
         self.subtitle = subtitle
+        self.source = source
         self.sound = sound
         self.threadId = threadId
     }
