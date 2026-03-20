@@ -19,6 +19,7 @@ export interface NotificationPayload {
   title: string;
   body?: string;
   subtitle?: string;
+  source?: string;       // project name (basename of cwd)
   sound?: string;
   threadId?: string;
 }

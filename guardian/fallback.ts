@@ -2,8 +2,15 @@ import type { HookEvent, NotificationPayload } from "./types";
 import { extractCommand } from "./types";
 import { classifyBashEvent } from "./classifier";
 import { createLogger } from "./logger";
+import { basename } from "node:path";
 
 const log = createLogger("fallback");
+
+/** Extract project name from cwd. */
+function projectName(event: HookEvent): string | undefined {
+  const cwd = event.cwd as string | undefined;
+  return cwd ? basename(cwd) : undefined;
+}
 
 /**
  * Generate a raw notification when Guardian is OFF or LLM fails.
@@ -12,6 +19,8 @@ const log = createLogger("fallback");
 export function fallbackNotification(
   event: HookEvent,
 ): NotificationPayload | null {
+  const source = projectName(event);
+
   switch (event._hook) {
     case "notification":
       log.info("fallback", "generating notification", {
@@ -20,6 +29,7 @@ export function fallbackNotification(
       return {
         title: (event.title as string) ?? "Codo",
         body: event.message as string | undefined,
+        source,
       };
 
     case "stop": {
@@ -30,6 +40,7 @@ export function fallbackNotification(
       return {
         title: "Task Complete",
         body,
+        source,
       };
     }
 
@@ -51,6 +62,7 @@ export function fallbackNotification(
       return {
         title: `${toolName} result`,
         body: truncate(event.tool_response as string, 100),
+        source,
       };
     }
 
@@ -62,6 +74,7 @@ export function fallbackNotification(
       return {
         title: `${toolName} failed`,
         body: truncate(event.error as string, 100),
+        source,
       };
     }
 
@@ -70,6 +83,7 @@ export function fallbackNotification(
       return {
         title: "Session Started",
         body: event.model as string | undefined,
+        source,
       };
 
     case "session-end":

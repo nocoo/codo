@@ -14,6 +14,7 @@ import {
   type AiProvider,
   type SdkType,
 } from "./providers";
+import { basename } from "node:path";
 import { createLogger } from "./logger";
 
 const log = createLogger("main");
@@ -85,6 +86,7 @@ export async function processLine(
         title: parsed.title as string,
         body: parsed.body as string | undefined,
         subtitle: parsed.subtitle as string | undefined,
+        source: parsed.source as string | undefined,
         sound: parsed.sound as string | undefined,
         threadId: parsed.threadId as string | undefined,
       },
@@ -127,6 +129,10 @@ async function processHookEvent(
       ...(result.notification ? { title: result.notification.title } : {}),
       ...(result.reason ? { reason: result.reason } : {}),
     });
+    // Ensure source (project name) is always present
+    if (result.notification && !result.notification.source && event.cwd) {
+      result.notification.source = basename(event.cwd as string);
+    }
     emitAction(result);
   } else {
     // Non-LLM events: use fallback or suppress

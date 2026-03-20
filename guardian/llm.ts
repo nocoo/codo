@@ -44,6 +44,10 @@ export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "string",
             description: "可选副标题，简体中文",
           },
+          source: {
+            type: "string",
+            description: "项目名称（cwd的basename），英文",
+          },
           sound: {
             type: "string",
             enum: ["default", "none"],
@@ -186,6 +190,7 @@ function parseOpenAIToolCall(
       title: args.title as string,
       body: args.body as string | undefined,
       subtitle: args.subtitle as string | undefined,
+      source: args.source as string | undefined,
       sound: args.sound as string | undefined,
       threadId: args.threadId as string | undefined,
     };
@@ -210,6 +215,7 @@ function parseAnthropicToolUse(
       title: args.title as string,
       body: args.body as string | undefined,
       subtitle: args.subtitle as string | undefined,
+      source: args.source as string | undefined,
       sound: args.sound as string | undefined,
       threadId: args.threadId as string | undefined,
     };

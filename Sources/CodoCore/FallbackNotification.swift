@@ -22,18 +22,20 @@ public enum FallbackNotification {
         hook: String,
         fields: [String: Any]
     ) -> CodoMessage? {
+        let source = projectName(from: fields)
+
         switch hook {
         case "notification":
             let title = fields["title"] as? String ?? "Codo"
             let body = fields["message"] as? String
-            return CodoMessage(title: title, body: body)
+            return CodoMessage(title: title, body: body, source: source)
 
         case "stop":
             let body = truncate(
                 fields["last_assistant_message"] as? String,
                 maxLength: 100
             )
-            return CodoMessage(title: "Task Complete", body: body)
+            return CodoMessage(title: "Task Complete", body: body, source: source)
 
         case "post-tool-use":
             guard let command = extractCommand(from: fields),
@@ -45,7 +47,7 @@ public enum FallbackNotification {
                 fields["tool_response"] as? String,
                 maxLength: 100
             )
-            return CodoMessage(title: "\(toolName) result", body: body)
+            return CodoMessage(title: "\(toolName) result", body: body, source: source)
 
         case "post-tool-use-failure":
             let toolName = fields["tool_name"] as? String ?? "Tool"
@@ -53,11 +55,11 @@ public enum FallbackNotification {
                 fields["error"] as? String,
                 maxLength: 100
             )
-            return CodoMessage(title: "\(toolName) failed", body: body)
+            return CodoMessage(title: "\(toolName) failed", body: body, source: source)
 
         case "session-start":
             let model = fields["model"] as? String
-            return CodoMessage(title: "Session Started", body: model)
+            return CodoMessage(title: "Session Started", body: model, source: source)
 
         case "session-end":
             return nil
@@ -65,6 +67,12 @@ public enum FallbackNotification {
         default:
             return nil
         }
+    }
+
+    /// Extract project name (last path component) from cwd field.
+    private static func projectName(from fields: [String: Any]) -> String? {
+        guard let cwd = fields["cwd"] as? String, !cwd.isEmpty else { return nil }
+        return (cwd as NSString).lastPathComponent
     }
 
     /// Extract the Bash command string from a PostToolUse event.
