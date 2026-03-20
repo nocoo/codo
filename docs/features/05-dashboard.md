@@ -109,14 +109,14 @@ Decoder 必须使用默认 `keyDecodingStrategy`（不设 `.convertFromSnakeCase
 
 #### 1c. `Sources/Codo/Dashboard/DashboardStore.swift` — NEW
 
-`@Observable` class (macOS 14+ Observation framework)。Single source of truth。
+`@MainActor @Observable` class (macOS 14+ Observation framework)。Single source of truth。**必须标记 `@MainActor`**，因为 `@Observable` 的属性变更必须发生在主线程才能安全驱动 SwiftUI 更新。
 
 **Properties:**
 
 | Property | Type | Source |
 |----------|------|--------|
 | `guardianAlive` | `Bool` | Polled from `GuardianProcess.isAlive` every 2s |
-| `socketAlive` | `Bool` | Polled from `SocketServer` running state |
+| `socketAlive` | `Bool` | Polled from `SocketServer.isListening` (新增 public computed property，见 Phase 1d2) |
 | `guardianUptime` | `TimeInterval` | Tracked from process start |
 | `notificationsSent` | `Int` | Incremented from `GuardianAction(action: "send")` |
 | `notificationsSuppressed` | `Int` | Incremented from `GuardianAction(action: "suppress")` |
@@ -168,10 +168,33 @@ DispatchQueue.main.async { [weak self] in
 }
 ```
 
+#### 1d2. `Sources/CodoCore/SocketServer.swift` — MODIFY (~1 line)
+
+当前 `running` 是 `private nonisolated(unsafe) var`，外部无法访问。需添加 public computed property：
+
+```swift
+/// Whether the server is currently listening for connections.
+public var isListening: Bool { running }
+```
+
+添加在 `public static let maxPayloadSize` 上方。
+
 #### 1e. `Sources/Codo/AppDelegate.swift` — MODIFY (~30 lines changed)
 
 - Add `private let dashboardStore = DashboardStore()`
-- In `dispatchHookEvent(rawJSON:)`: decode → `HookEvent`, call `dashboardStore.ingestHookEvent()`
+- In `dispatchHookEvent(rawJSON:)`: decode → `HookEvent`, then **必须 hop 到 main thread** 再调用 `dashboardStore.ingestHookEvent()`。原因：`dispatchHookEvent` 由 `SocketServer` 的 GCD handler 调用（`DispatchQueue.global(qos: .userInitiated)`），而 `DashboardStore` 标记为 `@MainActor`，从非主线程直接调用会触发 data race / Swift 并发警告。实现方式：
+  ```swift
+  func dispatchHookEvent(rawJSON: Data) {
+      // ... existing guardian/fallback logic ...
+
+      // NEW: tap for dashboard (non-blocking main-thread hop)
+      if let event = try? JSONDecoder().decode(HookEvent.self, from: rawJSON) {
+          Task { @MainActor in
+              dashboardStore.ingestHookEvent(event)
+          }
+      }
+  }
+  ```
 - In `spawnGuardianIfNeeded()`: connect `proc.onAction = { dashboardStore.ingestGuardianAction($0) }`
 - After `startDaemon()`: call `dashboardStore.startPolling(guardianProvider: { [weak self] in self?.guardian }, socketServer: socketServer)`
 - Replace `settingsWindow: SettingsWindowController?` → `mainWindow: MainWindowController?`
@@ -179,6 +202,11 @@ DispatchQueue.main.async { [weak self] in
 - Menu item: "Settings..." Cmd+, → "Dashboard..." Cmd+D
 
 **Atomic commit**: Phase 1 result = 编译通过，数据层就绪，无 UI 变化。
+
+**线程安全总结**：`DashboardStore` 标记 `@MainActor`，所有写入入口必须在主线程：
+- `startPolling` Timer — `Timer.scheduledTimer` 默认在 main RunLoop 触发 ✅
+- `ingestHookEvent()` — 由 `dispatchHookEvent` 通过 `Task { @MainActor in }` 跳转 ✅
+- `ingestGuardianAction()` — 由 `GuardianProcess.onAction` 通过 `DispatchQueue.main.async` 跳转 ✅
 
 ---
 
@@ -366,12 +394,13 @@ Project row for sidebar: logo image (64×64) + name + relative time badge.
 | 17 | `Sources/Codo/Dashboard/Views/LogsView.swift` | ~120 |
 | 18 | `Sources/Codo/Dashboard/Views/ProjectRow.swift` | ~50 |
 
-### Modified Files (3)
+### Modified Files (4)
 
 | File | Changes |
 |------|---------|
 | `Sources/CodoCore/GuardianProcess.swift` | Add `onAction` callback (~5 lines) |
-| `Sources/Codo/AppDelegate.swift` | Replace settings window → main window, add DashboardStore wiring, hook event tap, menu item change (~30 lines) |
+| `Sources/CodoCore/SocketServer.swift` | Add `public var isListening: Bool { running }` (~1 line) |
+| `Sources/Codo/AppDelegate.swift` | Replace settings window → main window, add DashboardStore wiring, hook event tap with `Task { @MainActor in }` hop, menu item change (~30 lines) |
 | `Sources/Codo/SettingsViewModel.swift` | Move `settingsDidSave` notification name here |
 
 ### Deleted Files (1)
@@ -402,8 +431,9 @@ open .build/release/Codo.app
 # 2. Live event flow — test with a HOOK event (not plain notification)
 #    Plain notification (echo '{"title":...}') goes through notification path,
 #    NOT through dispatchHookEvent, so it won't appear in LiveEventStream.
-#    Use a hook event payload instead:
-echo '{"_hook":"stop","session_id":"test-123","cwd":"/tmp/test-project","hook_event_name":"Stop","last_assistant_message":"All done"}' | bun ~/.codo/codo.ts
+#    IMPORTANT: CLI requires `--hook <type>` to enter hook mode.
+#    Without --hook, stdin is parsed as a notification and will fail on missing title.
+echo '{"session_id":"test-123","cwd":"/tmp/test-project","hook_event_name":"Stop","last_assistant_message":"All done"}' | bun ~/.codo/codo.ts --hook stop
 #    → Event appears in LiveEventStream with project "test-project"
 #    → If Guardian is alive, Guardian will also process and may send a notification
 
@@ -412,9 +442,9 @@ echo '{"title":"Banner Test","body":"This is a direct notification","source":"co
 #    → Banner notification appears (this does NOT feed into LiveEventStream)
 
 # 3. Session tracking
-echo '{"_hook":"session-start","session_id":"s-abc","cwd":"/Users/nocoo/workspace/personal/codo","model":"claude-sonnet-4-6","hook_event_name":"SessionStart"}' | bun ~/.codo/codo.ts
+echo '{"session_id":"s-abc","cwd":"/Users/nocoo/workspace/personal/codo","model":"claude-sonnet-4-6","hook_event_name":"SessionStart"}' | bun ~/.codo/codo.ts --hook session-start
 #    → Project "codo" auto-discovered in sidebar, session in ActiveSessionsList
-echo '{"_hook":"session-end","session_id":"s-abc","hook_event_name":"SessionEnd"}' | bun ~/.codo/codo.ts
+echo '{"session_id":"s-abc","hook_event_name":"SessionEnd"}' | bun ~/.codo/codo.ts --hook session-end
 #    → Session removed from ActiveSessionsList (note: session-end may lack cwd)
 
 # 4. Settings
