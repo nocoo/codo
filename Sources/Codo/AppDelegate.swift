@@ -48,22 +48,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(
-            withLength: NSStatusItem.variableLength
+            withLength: NSStatusItem.squareLength
         )
-        fputs("setupStatusItem: button=\(statusItem.button != nil) "
-            + "visible=\(statusItem.isVisible)\n", stderr)
-
         if let button = statusItem.button {
-            // Try plain text first to rule out image issues
-            button.title = "Codo"
             if let img = Bundle.main.image(forResource: "menubar") {
                 img.isTemplate = true
-                img.size = NSSize(width: 18, height: 18)
                 button.image = img
-                button.imagePosition = .imageLeading
+            } else {
+                button.image = NSImage(
+                    systemSymbolName: "bell",
+                    accessibilityDescription: "Codo"
+                )
+                button.image?.isTemplate = true
             }
-            fputs("setupStatusItem: title=\(button.title) "
-                + "image=\(button.image != nil)\n", stderr)
         }
     }
 
