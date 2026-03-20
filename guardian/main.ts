@@ -185,10 +185,27 @@ if (import.meta.main) {
     );
   });
 
-  rl.on("close", () => {
-    // Drain queue before exit
-    queue.then(() => process.exit(0));
-  });
+  // line handler is the only rl listener — close is handled after startup log
 
   log.info("startup", "guardian started");
+
+  // Keep alive — never exit on stdin close, uncaught errors, or unhandled rejections
+  rl.on("close", () => {
+    log.warn("stdin", "stdin closed, waiting for reconnect");
+    // Do NOT exit — the daemon may reopen a pipe or send SIGTERM to stop us
+  });
+
+  process.on("uncaughtException", (err) => {
+    log.error("uncaught", "exception", {
+      error: err.message,
+      stack: err.stack,
+    });
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    log.error("uncaught", "unhandled rejection", {
+      error: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+    });
+  });
 }

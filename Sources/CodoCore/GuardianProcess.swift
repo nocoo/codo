@@ -98,7 +98,11 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
             guard let pipe = self?.stdinPipe, self?.isAlive == true else { return }
             var data = line
             data.append(UInt8(ascii: "\n"))
-            pipe.fileHandleForWriting.write(data)
+            do {
+                try pipe.fileHandleForWriting.write(contentsOf: data)
+            } catch {
+                logger.warning("stdin write failed: \(error.localizedDescription)")
+            }
         }
     }
 

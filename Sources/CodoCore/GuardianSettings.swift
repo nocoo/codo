@@ -1,12 +1,13 @@
 import Foundation
 
 /// Pure data model for Guardian settings. No UI dependencies.
-/// Reads/writes UserDefaults, but has no observation/binding support.
+/// Uses a fixed suite name so settings survive bundle ID changes.
 public struct GuardianSettings {
+    private static let suiteName = "ai.hexly.codo"
     private let defaults: UserDefaults
 
-    public init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    public init(defaults: UserDefaults? = nil) {
+        self.defaults = defaults ?? UserDefaults(suiteName: Self.suiteName) ?? .standard
     }
 
     private enum Key: String {
