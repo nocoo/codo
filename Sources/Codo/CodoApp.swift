@@ -4,6 +4,9 @@ import CodoCore
 @main
 struct CodoApp {
     @MainActor static func main() {
+        // Ignore SIGPIPE — guardian pipe writes must not crash the daemon
+        signal(SIGPIPE, SIG_IGN)
+
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         // Prevent macOS from auto-terminating this background daemon
