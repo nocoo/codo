@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>ai.hexly.codo.02</string>
+    <string>ai.hexly.codo.04</string>
     <key>CFBundleName</key>
     <string>Codo</string>
     <key>CFBundleDisplayName</key>
@@ -20,6 +20,10 @@
     <string>AppIcon</string>
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>

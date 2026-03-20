@@ -4,7 +4,7 @@ import os
 import ServiceManagement
 import UserNotifications
 
-private let logger = Logger(subsystem: "ai.hexly.codo.03", category: "app")
+private let logger = Logger(subsystem: "ai.hexly.codo.04", category: "app")
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
