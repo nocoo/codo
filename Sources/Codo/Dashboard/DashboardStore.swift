@@ -9,6 +9,10 @@ import Observation
 @MainActor
 @Observable
 final class DashboardStore {
+    // MARK: - Navigation
+
+    var selectedNav: NavigationItem = .dashboard
+
     // MARK: - Status
 
     var guardianAlive = false
@@ -78,7 +82,7 @@ final class DashboardStore {
 
     /// Process an incoming hook event from AppDelegate.
     func ingestHookEvent(_ event: HookEvent) {
-        let projectName = event.cwd.map {
+        var projectName = event.cwd.map {
             URL(fileURLWithPath: $0).lastPathComponent
         }
 
@@ -101,6 +105,10 @@ final class DashboardStore {
                 // session-end may lack cwd — look up from active sessions
                 if let existing = activeSessions.first(where: { $0.id == sessionId }) {
                     updateProjectLastSeen(cwd: existing.cwd)
+                    // Backfill project name when event lacks cwd
+                    if projectName == nil {
+                        projectName = existing.projectName
+                    }
                 }
                 activeSessions.removeAll { $0.id == sessionId }
 
@@ -232,6 +240,18 @@ final class DashboardStore {
 
         try? pngData.write(to: URL(fileURLWithPath: logoPath))
         projects[idx].customLogoPath = logoPath
+    }
+
+    /// Remove the custom logo for a project.
+    func removeProjectLogo(for projectId: String) {
+        guard let idx = projects.firstIndex(where: { $0.id == projectId })
+        else { return }
+
+        // Delete old file if it exists
+        if let oldPath = projects[idx].customLogoPath {
+            try? FileManager.default.removeItem(atPath: oldPath)
+        }
+        projects[idx].customLogoPath = nil
     }
 
     private func sha256Prefix(_ input: String, length: Int) -> String {
