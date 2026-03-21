@@ -28,7 +28,7 @@ struct ProjectRow: View {
             }
             if project.customLogoPath != nil {
                 Button("Remove Logo") {
-                    store.setProjectLogo(for: project.id, imageURL: URL(fileURLWithPath: "/dev/null"))
+                    store.removeProjectLogo(for: project.id)
                 }
             }
         }
