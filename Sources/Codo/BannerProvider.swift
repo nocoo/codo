@@ -95,10 +95,12 @@ final class BannerWindow: NSPanel {
         let visibleFrame = screen.visibleFrame
         let size = frame.size
 
-        let targetX = visibleFrame.maxX - size.width - Banner.screenMargin
-        let posY = visibleFrame.maxY - size.height - Banner.screenMargin
-        let targetOrigin = NSPoint(x: targetX, y: posY)
-        slideOutOrigin = NSPoint(x: visibleFrame.maxX + 20, y: posY)
+        // Bottom-center of active screen
+        let targetX = visibleFrame.midX - size.width / 2
+        let targetY = visibleFrame.minY + Banner.screenMargin
+        let targetOrigin = NSPoint(x: targetX, y: targetY)
+        // Start position: below screen edge
+        slideOutOrigin = NSPoint(x: targetX, y: visibleFrame.minY - size.height - 20)
 
         setFrameOrigin(slideOutOrigin)
         alphaValue = 1
