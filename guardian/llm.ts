@@ -116,6 +116,24 @@ export function buildSystemPrompt(state: StateStore): string {
   return parts.join("\n");
 }
 
+/**
+ * Safely coerce an unknown HookEvent field to a bounded string.
+ * - string → truncate to max
+ * - null/undefined → ""
+ * - object/array → JSON.stringify, then truncate
+ */
+export function stringify(v: unknown, max: number): string {
+  if (typeof v === "string")
+    return v.length <= max ? v : `${v.slice(0, max)}...`;
+  if (v == null) return "";
+  try {
+    const s = JSON.stringify(v);
+    return s.length <= max ? s : `${s.slice(0, max)}...`;
+  } catch {
+    return String(v).slice(0, max);
+  }
+}
+
 export function buildUserMessage(event: HookEvent): string {
   const parts: string[] = [`Hook event: ${event._hook}`];
 
@@ -123,22 +141,22 @@ export function buildUserMessage(event: HookEvent): string {
     case "stop":
       if (event.last_assistant_message) {
         parts.push(
-          `Last assistant message: ${event.last_assistant_message as string}`,
+          `Last assistant message: ${stringify(event.last_assistant_message, 500)}`,
         );
       }
       break;
 
     case "notification":
-      if (event.title) parts.push(`Title: ${event.title as string}`);
-      if (event.message) parts.push(`Message: ${event.message as string}`);
+      if (event.title) parts.push(`Title: ${String(event.title)}`);
+      if (event.message) parts.push(`Message: ${String(event.message)}`);
       if (event.notification_type) {
-        parts.push(`Type: ${event.notification_type as string}`);
+        parts.push(`Type: ${String(event.notification_type)}`);
       }
       break;
 
     case "post-tool-use":
       if (event.tool_name) {
-        parts.push(`Tool: ${event.tool_name as string}`);
+        parts.push(`Tool: ${String(event.tool_name)}`);
       }
       {
         const cmd = extractCommand(event);
@@ -147,24 +165,23 @@ export function buildUserMessage(event: HookEvent): string {
         }
       }
       if (event.tool_response) {
-        const response = event.tool_response as string;
         parts.push(
-          `Output: ${response.length > 500 ? `${response.slice(0, 500)}...` : response}`,
+          `Output: ${stringify(event.tool_response, 500)}`,
         );
       }
       break;
 
     case "post-tool-use-failure":
       if (event.tool_name) {
-        parts.push(`Tool: ${event.tool_name as string}`);
+        parts.push(`Tool: ${String(event.tool_name)}`);
       }
       if (event.error) {
-        parts.push(`Error: ${event.error as string}`);
+        parts.push(`Error: ${stringify(event.error, 500)}`);
       }
       break;
 
     case "session-start":
-      if (event.model) parts.push(`Model: ${event.model as string}`);
+      if (event.model) parts.push(`Model: ${String(event.model)}`);
       break;
 
     case "session-end":
