@@ -5,22 +5,22 @@ import CodoCore
 
 enum Banner {
     static let maxWidth: CGFloat = 400
-    static let minHeight: CGFloat = 80
+    static let minHeight: CGFloat = 72
     static let cornerRadius: CGFloat = 16
     static let screenMargin: CGFloat = 24
 
     // Content insets
-    static let paddingH: CGFloat = 16
-    static let paddingTop: CGFloat = 14
-    static let paddingBottom: CGFloat = 16
+    static let paddingH: CGFloat = 14
+    static let paddingTop: CGFloat = 10
+    static let paddingBottom: CGFloat = 14
 
-    // Icon — centered header, larger logo
-    static let iconSize: CGFloat = 28
-    static let iconCornerRadius: CGFloat = 7
-    static let iconProjectGap: CGFloat = 4   // icon → project name (vertical)
+    // Icon — compact header row (icon + project name inline)
+    static let iconSize: CGFloat = 20
+    static let iconCornerRadius: CGFloat = 5
+    static let iconTextGap: CGFloat = 6
 
     // Spacing between sections
-    static let headerContentGap: CGFloat = 10   // header group → title
+    static let headerContentGap: CGFloat = 6    // header row → title
     static let titleBodyGap: CGFloat = 4        // title → body
 
     // Close button
@@ -33,14 +33,18 @@ enum Banner {
     static let slideOutDuration: TimeInterval = 0.2
 
     // Typography
-    static let projectFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+    static let projectFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
     static let titleFont = NSFont.systemFont(ofSize: 14, weight: .bold)
     static let bodyFont = NSFont.systemFont(ofSize: 13, weight: .regular)
+    static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let headingFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
     // Colors
     static let projectColor = NSColor.secondaryLabelColor
     static let titleColor = NSColor.labelColor
     static let bodyColor = NSColor.secondaryLabelColor
+    static let codeColor = NSColor.tertiaryLabelColor
+    static let codeBgColor = NSColor.quaternaryLabelColor
 }
 
 // MARK: - BannerContentView
@@ -55,32 +59,8 @@ final class BannerContentView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
 
-        // ── Shadow Layer (ambient — large, soft) ──
-        let shadowLayer = layer ?? CALayer()
-        if layer == nil { layer = shadowLayer }
-        shadowLayer.shadowColor = NSColor.black.cgColor
-        shadowLayer.shadowOpacity = 0.08
-        shadowLayer.shadowRadius = 40
-        shadowLayer.shadowOffset = CGSize(width: 0, height: -8)
-
-        // ── Contact shadow sublayer (tight, subtle) ──
-        let contactShadow = CALayer()
-        contactShadow.shadowColor = NSColor.black.cgColor
-        contactShadow.shadowOpacity = 0.15
-        contactShadow.shadowRadius = 8
-        contactShadow.shadowOffset = CGSize(width: 0, height: -2)
-        shadowLayer.addSublayer(contactShadow)
-
-        // ── Frosted glass background (macOS 12.6 style) ──
-        let glass = NSVisualEffectView()
-        glass.material = .popover
-        glass.state = .active
-        glass.blendingMode = .behindWindow
-        glass.wantsLayer = true
-        glass.layer?.cornerRadius = Banner.cornerRadius
-        glass.layer?.masksToBounds = true
-        glass.layer?.borderWidth = 0.5
-        glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+        let (_, contactShadow) = configureShadows(on: self)
+        let glass = makeGlassBackground()
         addSubview(glass)
 
         // ── Close button (top-LEFT, hover-only) ──
@@ -88,7 +68,7 @@ final class BannerContentView: NSView {
         addSubview(closeBtn)
         self.closeButton = closeBtn
 
-        // ── Header group: Centered App icon + project name ──
+        // ── Row 1: [AppIcon] [gap] ProjectName ──
         let iconView = NSImageView()
         if let appIcon = NSImage(named: NSImage.applicationIconName) {
             iconView.image = appIcon
@@ -99,7 +79,7 @@ final class BannerContentView: NSView {
         iconView.layer?.masksToBounds = true
         addSubview(iconView)
 
-        let projectLabel = makeLabel(
+        let projectLabel = makeBannerLabel(
             message.source ?? "Codo",
             font: Banner.projectFont,
             color: Banner.projectColor,
@@ -108,8 +88,8 @@ final class BannerContentView: NSView {
         )
         addSubview(projectLabel)
 
-        // ── Title ──
-        let titleLabel = makeLabel(
+        // ── Row 2: Title ──
+        let titleLabel = makeBannerLabel(
             message.title,
             font: Banner.titleFont,
             color: Banner.titleColor,
@@ -118,19 +98,22 @@ final class BannerContentView: NSView {
         )
         addSubview(titleLabel)
 
-        // ── Body (optional, max 8 lines) ──
-        var bodyLabel: NSTextField?
+        // ── Row 3: Body with Markdown rendering (optional, max 8 lines) ──
+        var bodyView: NSTextField?
         if let body = message.body, !body.isEmpty {
-            let label = makeLabel(body, font: Banner.bodyFont, color: Banner.bodyColor, maxLines: 8, wraps: true)
+            let label = makeBannerAttributedLabel(
+                MarkdownRenderer.render(body, maxLines: 8),
+                maxLines: 8
+            )
             addSubview(label)
-            bodyLabel = label
+            bodyView = label
         }
 
         activateLayout(
             glass: glass,
             views: LayoutViews(
                 icon: iconView, project: projectLabel,
-                title: titleLabel, body: bodyLabel, close: closeBtn
+                title: titleLabel, body: bodyView, close: closeBtn
             ),
             contactShadow: contactShadow
         )
@@ -180,27 +163,31 @@ final class BannerContentView: NSView {
             closeButton.widthAnchor.constraint(equalToConstant: Banner.closeButtonSize),
             closeButton.heightAnchor.constraint(equalToConstant: Banner.closeButtonSize),
 
-            // Icon: centered horizontally, top with padding
-            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            // Row 1: [icon] [gap] ProjectName — left-aligned, compact
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             iconView.topAnchor.constraint(equalTo: topAnchor, constant: Banner.paddingTop),
             iconView.widthAnchor.constraint(equalToConstant: Banner.iconSize),
             iconView.heightAnchor.constraint(equalToConstant: Banner.iconSize),
 
-            // Project name: centered below icon
-            projectLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            projectLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: Banner.iconProjectGap),
+            projectLabel.leadingAnchor.constraint(
+                equalTo: iconView.trailingAnchor, constant: Banner.iconTextGap),
+            projectLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+            projectLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -pad),
 
-            // Title: full width below header group
+            // Row 2: Title — full width below header row
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            titleLabel.topAnchor.constraint(equalTo: projectLabel.bottomAnchor, constant: Banner.headerContentGap)
+            titleLabel.topAnchor.constraint(
+                equalTo: iconView.bottomAnchor, constant: Banner.headerContentGap)
         ]
 
         if let bodyLabel {
             constraints += [
                 bodyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
                 bodyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-                bodyLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: Banner.titleBodyGap),
+                bodyLabel.topAnchor.constraint(
+                    equalTo: titleLabel.bottomAnchor, constant: Banner.titleBodyGap),
                 bodyLabel.bottomAnchor.constraint(
                     lessThanOrEqualTo: bottomAnchor, constant: -Banner.paddingBottom)
             ]
@@ -305,31 +292,84 @@ final class BannerContentView: NSView {
         btn.isHidden = true
         return btn
     }
+}
 
-    private func makeLabel(
-        _ text: String,
-        font: NSFont,
-        color: NSColor,
-        maxLines: Int,
-        wraps: Bool
-    ) -> NSTextField {
-        let label: NSTextField
-        if wraps {
-            label = NSTextField(wrappingLabelWithString: text)
-            label.lineBreakMode = .byWordWrapping
-        } else {
-            label = NSTextField(labelWithString: text)
-            label.lineBreakMode = .byTruncatingTail
-        }
-        label.font = font
-        label.textColor = color
-        label.maximumNumberOfLines = maxLines
-        label.isEditable = false
-        label.isSelectable = false
-        label.drawsBackground = false
-        label.isBordered = false
-        label.setContentCompressionResistancePriority(.required, for: .vertical)
-        label.setContentHuggingPriority(.required, for: .vertical)
-        return label
+// MARK: - Label Factory
+
+private func makeBannerLabel(
+    _ text: String,
+    font: NSFont,
+    color: NSColor,
+    maxLines: Int,
+    wraps: Bool
+) -> NSTextField {
+    let label: NSTextField
+    if wraps {
+        label = NSTextField(wrappingLabelWithString: text)
+        label.lineBreakMode = .byWordWrapping
+    } else {
+        label = NSTextField(labelWithString: text)
+        label.lineBreakMode = .byTruncatingTail
     }
+    label.font = font
+    label.textColor = color
+    label.maximumNumberOfLines = maxLines
+    label.isEditable = false
+    label.isSelectable = false
+    label.drawsBackground = false
+    label.isBordered = false
+    label.setContentCompressionResistancePriority(.required, for: .vertical)
+    label.setContentHuggingPriority(.required, for: .vertical)
+    return label
+}
+
+private func makeBannerAttributedLabel(
+    _ attributedString: NSAttributedString,
+    maxLines: Int
+) -> NSTextField {
+    let label = NSTextField(wrappingLabelWithString: "")
+    label.attributedStringValue = attributedString
+    label.lineBreakMode = .byWordWrapping
+    label.maximumNumberOfLines = maxLines
+    label.isEditable = false
+    label.isSelectable = false
+    label.drawsBackground = false
+    label.isBordered = false
+    label.setContentCompressionResistancePriority(.required, for: .vertical)
+    label.setContentHuggingPriority(.required, for: .vertical)
+    return label
+}
+
+// MARK: - View Factory
+
+@discardableResult
+private func configureShadows(on view: NSView) -> (ambient: CALayer, contact: CALayer) {
+    let shadowLayer = view.layer ?? CALayer()
+    if view.layer == nil { view.layer = shadowLayer }
+    shadowLayer.shadowColor = NSColor.black.cgColor
+    shadowLayer.shadowOpacity = 0.08
+    shadowLayer.shadowRadius = 40
+    shadowLayer.shadowOffset = CGSize(width: 0, height: -8)
+
+    let contactShadow = CALayer()
+    contactShadow.shadowColor = NSColor.black.cgColor
+    contactShadow.shadowOpacity = 0.15
+    contactShadow.shadowRadius = 8
+    contactShadow.shadowOffset = CGSize(width: 0, height: -2)
+    shadowLayer.addSublayer(contactShadow)
+
+    return (shadowLayer, contactShadow)
+}
+
+private func makeGlassBackground() -> NSVisualEffectView {
+    let glass = NSVisualEffectView()
+    glass.material = .popover
+    glass.state = .active
+    glass.blendingMode = .behindWindow
+    glass.wantsLayer = true
+    glass.layer?.cornerRadius = Banner.cornerRadius
+    glass.layer?.masksToBounds = true
+    glass.layer?.borderWidth = 0.5
+    glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+    return glass
 }
