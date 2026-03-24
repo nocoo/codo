@@ -17,15 +17,21 @@ enum Banner {
     static let paddingTop: CGFloat = 12
     static let paddingBottom: CGFloat = 14
 
-    // Left column: icon only, vertically centered
+    // Left column: icon only, top-aligned
     static let iconSize: CGFloat = 40
     static let iconCornerRadius: CGFloat = 10
     static let leftColumnWidth: CGFloat = 40    // same as icon for icon-only column
     static let columnGap: CGFloat = 12          // left column → right content
 
     // Spacing between sections (right column)
-    static let projectTitleGap: CGFloat = 2     // source label → title
-    static let titleBodyGap: CGFloat = 4        // title → body
+    static let badgeTitleGap: CGFloat = 6       // badge → title (horizontal)
+    static let titleBodyGap: CGFloat = 4        // title row → body
+
+    // Project badge (capsule)
+    static let badgePaddingH: CGFloat = 8
+    static let badgePaddingV: CGFloat = 2
+    static let badgeCornerRadius: CGFloat = 8
+    static let badgeFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
 
     // Close button — badge style, overlaps glass boundary
     static let closeButtonSize: CGFloat = 24
@@ -36,18 +42,28 @@ enum Banner {
     static let slideOutDuration: TimeInterval = 0.2
 
     // Typography
-    static let projectFont = NSFont.systemFont(ofSize: 12, weight: .medium)
     static let titleFont = NSFont.systemFont(ofSize: 14, weight: .bold)
     static let bodyFont = NSFont.systemFont(ofSize: 13, weight: .regular)
     static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     static let headingFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
     // Colors
-    static let projectColor = NSColor.secondaryLabelColor
     static let titleColor = NSColor.labelColor
     static let bodyColor = NSColor.secondaryLabelColor
     static let codeColor = NSColor.tertiaryLabelColor
     static let codeBgColor = NSColor.quaternaryLabelColor
+
+    // Badge color palette — vibrant, white-text-friendly
+    static let badgeColors: [NSColor] = [
+        NSColor(red: 0.35, green: 0.56, blue: 0.98, alpha: 1),  // blue
+        NSColor(red: 0.90, green: 0.42, blue: 0.45, alpha: 1),  // coral
+        NSColor(red: 0.55, green: 0.78, blue: 0.25, alpha: 1),  // green
+        NSColor(red: 0.80, green: 0.52, blue: 0.90, alpha: 1),  // purple
+        NSColor(red: 0.95, green: 0.62, blue: 0.22, alpha: 1),  // orange
+        NSColor(red: 0.25, green: 0.75, blue: 0.72, alpha: 1),  // teal
+        NSColor(red: 0.92, green: 0.45, blue: 0.68, alpha: 1),  // pink
+        NSColor(red: 0.60, green: 0.60, blue: 0.35, alpha: 1)   // olive
+    ]
 }
 
 // MARK: - BannerContentView
@@ -71,7 +87,7 @@ final class BannerContentView: NSView {
         addSubview(closeBtn)
         self.closeButton = closeBtn
 
-        // ── Left column: Icon only (vertically centered in glass) ──
+        // ── Left column: Icon only (top-aligned in glass) ──
         let iconView = NSImageView()
         if let appIcon = NSImage(named: NSImage.applicationIconName) {
             iconView.image = appIcon
@@ -82,15 +98,10 @@ final class BannerContentView: NSView {
         iconView.layer?.masksToBounds = true
         addSubview(iconView)
 
-        // ── Right column: Source → Title → Body ──
-        let projectLabel = makeBannerLabel(
-            message.source ?? "Codo",
-            font: Banner.projectFont,
-            color: Banner.projectColor,
-            maxLines: 1,
-            wraps: false
-        )
-        addSubview(projectLabel)
+        // ── Right column, row 1: [Badge] [Title] on one line ──
+        let projectName = message.source ?? "Codo"
+        let projectBadge = makeProjectBadge(projectName)
+        addSubview(projectBadge)
 
         let titleLabel = makeBannerLabel(
             message.title,
@@ -101,6 +112,7 @@ final class BannerContentView: NSView {
         )
         addSubview(titleLabel)
 
+        // ── Right column, row 2: Body (optional) ──
         var bodyView: NSTextField?
         if let body = message.body, !body.isEmpty {
             let label = makeBannerAttributedLabel(
@@ -114,7 +126,7 @@ final class BannerContentView: NSView {
         activateLayout(
             glass: glass,
             views: LayoutViews(
-                icon: iconView, project: projectLabel,
+                icon: iconView, badge: projectBadge,
                 title: titleLabel, body: bodyView, close: closeBtn
             )
         )
@@ -127,7 +139,7 @@ final class BannerContentView: NSView {
 
     private struct LayoutViews {
         let icon: NSView
-        let project: NSView
+        let badge: NSView
         let title: NSView
         let body: NSTextField?
         let close: NSButton
@@ -138,12 +150,12 @@ final class BannerContentView: NSView {
         views: LayoutViews
     ) {
         let iconView = views.icon
-        let projectLabel = views.project
+        let badge = views.badge
         let titleLabel = views.title
         let bodyLabel = views.body
         let closeButton = views.close
 
-        for view in [glass, iconView, projectLabel, titleLabel, closeButton] as [NSView] {
+        for view in [glass, iconView, badge, titleLabel, closeButton] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
         }
         bodyLabel?.translatesAutoresizingMaskIntoConstraints = false
@@ -167,22 +179,20 @@ final class BannerContentView: NSView {
             closeButton.widthAnchor.constraint(equalToConstant: Banner.closeButtonSize),
             closeButton.heightAnchor.constraint(equalToConstant: Banner.closeButtonSize),
 
-            // Left column: icon vertically centered in glass
+            // Left column: icon top-aligned in glass
             iconView.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: pad),
-            iconView.centerYAnchor.constraint(equalTo: glass.centerYAnchor),
+            iconView.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.paddingTop),
             iconView.widthAnchor.constraint(equalToConstant: Banner.iconSize),
             iconView.heightAnchor.constraint(equalToConstant: Banner.iconSize),
 
-            // Right column: Source label
-            projectLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
-            projectLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
-            projectLabel.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.paddingTop),
+            // Row 1: [Badge] then [Title] — badge baseline-aligned with title first line
+            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
+            badge.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.paddingTop),
 
-            // Right column: Title below source
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
+            titleLabel.leadingAnchor.constraint(
+                equalTo: badge.trailingAnchor, constant: Banner.badgeTitleGap),
             titleLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
-            titleLabel.topAnchor.constraint(
-                equalTo: projectLabel.bottomAnchor, constant: Banner.projectTitleGap)
+            titleLabel.firstBaselineAnchor.constraint(equalTo: badge.firstBaselineAnchor)
         ]
 
         if let bodyLabel {
@@ -330,65 +340,4 @@ final class BannerContentView: NSView {
         btn.isHidden = true
         return btn
     }
-}
-
-// MARK: - Label Factory
-
-private func makeBannerLabel(
-    _ text: String,
-    font: NSFont,
-    color: NSColor,
-    maxLines: Int,
-    wraps: Bool
-) -> NSTextField {
-    let label: NSTextField
-    if wraps {
-        label = NSTextField(wrappingLabelWithString: text)
-        label.lineBreakMode = .byWordWrapping
-    } else {
-        label = NSTextField(labelWithString: text)
-        label.lineBreakMode = .byTruncatingTail
-    }
-    label.font = font
-    label.textColor = color
-    label.maximumNumberOfLines = maxLines
-    label.isEditable = false
-    label.isSelectable = false
-    label.drawsBackground = false
-    label.isBordered = false
-    label.setContentCompressionResistancePriority(.required, for: .vertical)
-    label.setContentHuggingPriority(.required, for: .vertical)
-    return label
-}
-
-private func makeBannerAttributedLabel(
-    _ attributedString: NSAttributedString,
-    maxLines: Int
-) -> NSTextField {
-    let label = NSTextField(wrappingLabelWithString: "")
-    label.attributedStringValue = attributedString
-    label.lineBreakMode = .byWordWrapping
-    label.maximumNumberOfLines = maxLines
-    label.isEditable = false
-    label.isSelectable = false
-    label.drawsBackground = false
-    label.isBordered = false
-    label.setContentCompressionResistancePriority(.required, for: .vertical)
-    label.setContentHuggingPriority(.required, for: .vertical)
-    return label
-}
-
-// MARK: - View Factory
-
-private func makeGlassBackground() -> NSVisualEffectView {
-    let glass = NSVisualEffectView()
-    glass.material = .popover
-    glass.state = .active
-    glass.blendingMode = .behindWindow
-    glass.wantsLayer = true
-    glass.layer?.cornerRadius = Banner.cornerRadius
-    glass.layer?.masksToBounds = true
-    glass.layer?.borderWidth = 0.5
-    glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
-    return glass
 }
