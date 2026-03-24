@@ -9,23 +9,26 @@ enum Banner {
     static let cornerRadius: CGFloat = 16
     static let screenMargin: CGFloat = 24
 
-    // Content insets
+    // Shadow overflow — extra padding around glass for shadows to render
+    static let shadowPadding: CGFloat = 48  // >= ambient shadowRadius(40) + offset(8)
+
+    // Content insets (within glass)
     static let paddingH: CGFloat = 14
-    static let paddingTop: CGFloat = 10
+    static let paddingTop: CGFloat = 12
     static let paddingBottom: CGFloat = 14
 
-    // Icon — compact header row (icon + project name inline)
-    static let iconSize: CGFloat = 20
-    static let iconCornerRadius: CGFloat = 5
-    static let iconTextGap: CGFloat = 6
+    // Left column: icon only, vertically centered
+    static let iconSize: CGFloat = 40
+    static let iconCornerRadius: CGFloat = 10
+    static let leftColumnWidth: CGFloat = 40    // same as icon for icon-only column
+    static let columnGap: CGFloat = 12          // left column → right content
 
-    // Spacing between sections
-    static let headerContentGap: CGFloat = 6    // header row → title
+    // Spacing between sections (right column)
+    static let projectTitleGap: CGFloat = 2     // source label → title
     static let titleBodyGap: CGFloat = 4        // title → body
 
-    // Close button
-    static let closeButtonSize: CGFloat = 20
-    static let closeButtonInset: CGFloat = 8
+    // Close button — badge style, overlaps glass boundary
+    static let closeButtonSize: CGFloat = 24
 
     // Timing
     static let displayDuration: TimeInterval = 5.0
@@ -33,7 +36,7 @@ enum Banner {
     static let slideOutDuration: TimeInterval = 0.2
 
     // Typography
-    static let projectFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    static let projectFont = NSFont.systemFont(ofSize: 12, weight: .medium)
     static let titleFont = NSFont.systemFont(ofSize: 14, weight: .bold)
     static let bodyFont = NSFont.systemFont(ofSize: 13, weight: .regular)
     static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -58,17 +61,17 @@ final class BannerContentView: NSView {
     init(message: CodoMessage) {
         super.init(frame: .zero)
         wantsLayer = true
+        layer?.masksToBounds = false  // allow close button + shadows to overflow
 
-        let (_, contactShadow) = configureShadows(on: self)
         let glass = makeGlassBackground()
         addSubview(glass)
 
-        // ── Close button (top-LEFT, hover-only) ──
+        // ── Close button (badge style, overlaps top-left corner of glass) ──
         let closeBtn = makeCloseButton()
         addSubview(closeBtn)
         self.closeButton = closeBtn
 
-        // ── Row 1: [AppIcon] [gap] ProjectName ──
+        // ── Left column: Icon only (vertically centered in glass) ──
         let iconView = NSImageView()
         if let appIcon = NSImage(named: NSImage.applicationIconName) {
             iconView.image = appIcon
@@ -79,6 +82,7 @@ final class BannerContentView: NSView {
         iconView.layer?.masksToBounds = true
         addSubview(iconView)
 
+        // ── Right column: Source → Title → Body ──
         let projectLabel = makeBannerLabel(
             message.source ?? "Codo",
             font: Banner.projectFont,
@@ -88,7 +92,6 @@ final class BannerContentView: NSView {
         )
         addSubview(projectLabel)
 
-        // ── Row 2: Title ──
         let titleLabel = makeBannerLabel(
             message.title,
             font: Banner.titleFont,
@@ -98,7 +101,6 @@ final class BannerContentView: NSView {
         )
         addSubview(titleLabel)
 
-        // ── Row 3: Body with Markdown rendering (optional, max 8 lines) ──
         var bodyView: NSTextField?
         if let body = message.body, !body.isEmpty {
             let label = makeBannerAttributedLabel(
@@ -114,8 +116,7 @@ final class BannerContentView: NSView {
             views: LayoutViews(
                 icon: iconView, project: projectLabel,
                 title: titleLabel, body: bodyView, close: closeBtn
-            ),
-            contactShadow: contactShadow
+            )
         )
     }
 
@@ -134,8 +135,7 @@ final class BannerContentView: NSView {
 
     private func activateLayout(
         glass: NSView,
-        views: LayoutViews,
-        contactShadow: CALayer
+        views: LayoutViews
     ) {
         let iconView = views.icon
         let projectLabel = views.project
@@ -149,77 +149,111 @@ final class BannerContentView: NSView {
         bodyLabel?.translatesAutoresizingMaskIntoConstraints = false
 
         let pad = Banner.paddingH
+        let shadowPad = Banner.shadowPadding
+
+        // Right column leading = shadowPadding + paddingH + leftColumn + columnGap
+        let rightLeading = shadowPad + pad + Banner.leftColumnWidth + Banner.columnGap
 
         var constraints = [
-            // Glass fills entire view
-            glass.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glass.trailingAnchor.constraint(equalTo: trailingAnchor),
-            glass.topAnchor.constraint(equalTo: topAnchor),
-            glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Glass is inset from view edges by shadowPadding on all sides
+            glass.leadingAnchor.constraint(equalTo: leadingAnchor, constant: shadowPad),
+            glass.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -shadowPad),
+            glass.topAnchor.constraint(equalTo: topAnchor, constant: shadowPad),
+            glass.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -shadowPad),
 
-            // Close button: top-LEFT
-            closeButton.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.closeButtonInset),
-            closeButton.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: Banner.closeButtonInset),
+            // Close button: badge centered on glass top-left corner
+            closeButton.centerXAnchor.constraint(equalTo: glass.leadingAnchor),
+            closeButton.centerYAnchor.constraint(equalTo: glass.topAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: Banner.closeButtonSize),
             closeButton.heightAnchor.constraint(equalToConstant: Banner.closeButtonSize),
 
-            // Row 1: [icon] [gap] ProjectName — left-aligned, compact
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            iconView.topAnchor.constraint(equalTo: topAnchor, constant: Banner.paddingTop),
+            // Left column: icon vertically centered in glass
+            iconView.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: pad),
+            iconView.centerYAnchor.constraint(equalTo: glass.centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: Banner.iconSize),
             iconView.heightAnchor.constraint(equalToConstant: Banner.iconSize),
 
-            projectLabel.leadingAnchor.constraint(
-                equalTo: iconView.trailingAnchor, constant: Banner.iconTextGap),
-            projectLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
-            projectLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: trailingAnchor, constant: -pad),
+            // Right column: Source label
+            projectLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
+            projectLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
+            projectLabel.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.paddingTop),
 
-            // Row 2: Title — full width below header row
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            // Right column: Title below source
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
+            titleLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
             titleLabel.topAnchor.constraint(
-                equalTo: iconView.bottomAnchor, constant: Banner.headerContentGap)
+                equalTo: projectLabel.bottomAnchor, constant: Banner.projectTitleGap)
         ]
 
         if let bodyLabel {
             constraints += [
-                bodyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-                bodyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+                bodyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
+                bodyLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
                 bodyLabel.topAnchor.constraint(
                     equalTo: titleLabel.bottomAnchor, constant: Banner.titleBodyGap),
                 bodyLabel.bottomAnchor.constraint(
-                    lessThanOrEqualTo: bottomAnchor, constant: -Banner.paddingBottom)
+                    lessThanOrEqualTo: glass.bottomAnchor, constant: -Banner.paddingBottom)
             ]
         } else {
             constraints.append(
                 titleLabel.bottomAnchor.constraint(
-                    lessThanOrEqualTo: bottomAnchor, constant: -Banner.paddingBottom)
+                    lessThanOrEqualTo: glass.bottomAnchor, constant: -Banner.paddingBottom)
             )
         }
+
+        // Left column bottom constraint (ensure glass tall enough for icon)
+        constraints.append(
+            iconView.bottomAnchor.constraint(
+                lessThanOrEqualTo: glass.bottomAnchor, constant: -Banner.paddingBottom)
+        )
 
         NSLayoutConstraint.activate(constraints)
     }
 
     override func layout() {
         super.layout()
-        // Keep contact shadow sublayer in sync with view bounds
-        if let contactShadow = layer?.sublayers?.first(where: { $0.shadowRadius == 8 }) {
-            contactShadow.frame = bounds
-            contactShadow.shadowPath = CGPath(
-                roundedRect: bounds,
-                cornerWidth: Banner.cornerRadius,
-                cornerHeight: Banner.cornerRadius,
-                transform: nil
-            )
-        }
-        // Update ambient shadow path for performance
+        // Compute glass rect (inset by shadowPadding)
+        let shadowPad = Banner.shadowPadding
+        let glassRect = bounds.insetBy(dx: shadowPad, dy: shadowPad)
+
+        // Apply ambient shadow on the view's own layer, matching glass shape
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.08
+        layer?.shadowRadius = 40
+        layer?.shadowOffset = CGSize(width: 0, height: -8)
         layer?.shadowPath = CGPath(
-            roundedRect: bounds,
+            roundedRect: glassRect,
             cornerWidth: Banner.cornerRadius,
             cornerHeight: Banner.cornerRadius,
             transform: nil
         )
+
+        // Keep contact shadow sublayer in sync with glass rect
+        if let contactShadow = layer?.sublayers?.first(where: { $0.name == "contactShadow" }) {
+            contactShadow.frame = bounds
+            contactShadow.shadowPath = CGPath(
+                roundedRect: glassRect,
+                cornerWidth: Banner.cornerRadius,
+                cornerHeight: Banner.cornerRadius,
+                transform: nil
+            )
+        } else {
+            // Create contact shadow on first layout
+            let contactShadow = CALayer()
+            contactShadow.name = "contactShadow"
+            contactShadow.frame = bounds
+            contactShadow.shadowColor = NSColor.black.cgColor
+            contactShadow.shadowOpacity = 0.15
+            contactShadow.shadowRadius = 8
+            contactShadow.shadowOffset = CGSize(width: 0, height: -2)
+            contactShadow.shadowPath = CGPath(
+                roundedRect: glassRect,
+                cornerWidth: Banner.cornerRadius,
+                cornerHeight: Banner.cornerRadius,
+                transform: nil
+            )
+            layer?.insertSublayer(contactShadow, at: 0)
+        }
     }
 
     // MARK: - Hover Tracking
@@ -273,7 +307,9 @@ final class BannerContentView: NSView {
 
     override var fittingSize: NSSize {
         let size = super.fittingSize
-        return NSSize(width: Banner.maxWidth, height: max(size.height, Banner.minHeight))
+        let totalWidth = Banner.maxWidth + Banner.shadowPadding * 2
+        let totalMinHeight = Banner.minHeight + Banner.shadowPadding * 2
+        return NSSize(width: totalWidth, height: max(size.height, totalMinHeight))
     }
 
     // MARK: - Helpers
@@ -284,9 +320,11 @@ final class BannerContentView: NSView {
         btn.isBordered = false
         btn.title = ""
         if let img = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close") {
-            btn.image = img.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+            btn.image = img.withSymbolConfiguration(.init(pointSize: 14, weight: .semibold))
         }
-        btn.contentTintColor = .tertiaryLabelColor
+        btn.contentTintColor = .secondaryLabelColor
+        btn.wantsLayer = true
+        btn.layer?.cornerRadius = Banner.closeButtonSize / 2
         btn.target = self
         btn.action = #selector(closeButtonClicked)
         btn.isHidden = true
@@ -341,25 +379,6 @@ private func makeBannerAttributedLabel(
 }
 
 // MARK: - View Factory
-
-@discardableResult
-private func configureShadows(on view: NSView) -> (ambient: CALayer, contact: CALayer) {
-    let shadowLayer = view.layer ?? CALayer()
-    if view.layer == nil { view.layer = shadowLayer }
-    shadowLayer.shadowColor = NSColor.black.cgColor
-    shadowLayer.shadowOpacity = 0.08
-    shadowLayer.shadowRadius = 40
-    shadowLayer.shadowOffset = CGSize(width: 0, height: -8)
-
-    let contactShadow = CALayer()
-    contactShadow.shadowColor = NSColor.black.cgColor
-    contactShadow.shadowOpacity = 0.15
-    contactShadow.shadowRadius = 8
-    contactShadow.shadowOffset = CGSize(width: 0, height: -2)
-    shadowLayer.addSublayer(contactShadow)
-
-    return (shadowLayer, contactShadow)
-}
 
 private func makeGlassBackground() -> NSVisualEffectView {
     let glass = NSVisualEffectView()

@@ -68,6 +68,8 @@ final class BannerWindow: NSPanel {
 
         let content = BannerContentView(message: message)
         self.contentView = content
+        content.wantsLayer = true
+        content.layer?.masksToBounds = false
 
         content.onHoverChanged = { [weak self] hovering in
             if hovering {
@@ -80,10 +82,13 @@ final class BannerWindow: NSPanel {
             self?.dismissAnimated()
         }
 
-        let targetSize = NSSize(width: Banner.maxWidth, height: 0)
+        // Window includes shadow padding on all sides around the glass
+        let shadowPad = Banner.shadowPadding
+        let totalWidth = Banner.maxWidth + shadowPad * 2
+        let targetSize = NSSize(width: totalWidth, height: 0)
         let fittingHeight = content.fittingSize(for: targetSize).height
-        let finalHeight = max(fittingHeight, Banner.minHeight)
-        setContentSize(NSSize(width: Banner.maxWidth, height: finalHeight))
+        let finalHeight = max(fittingHeight, Banner.minHeight + shadowPad * 2)
+        setContentSize(NSSize(width: totalWidth, height: finalHeight))
     }
 
     func show() {
@@ -94,13 +99,15 @@ final class BannerWindow: NSPanel {
 
         let visibleFrame = screen.visibleFrame
         let size = frame.size
+        let shadowPad = Banner.shadowPadding
 
-        // Bottom-center of active screen
+        // Top-center of active screen (below menu bar / notch)
+        // Offset by shadowPadding so the glass (not the shadow space) aligns with screen edge
         let targetX = visibleFrame.midX - size.width / 2
-        let targetY = visibleFrame.minY + Banner.screenMargin
+        let targetY = visibleFrame.maxY - size.height - Banner.screenMargin + shadowPad
         let targetOrigin = NSPoint(x: targetX, y: targetY)
-        // Start position: below screen edge
-        slideOutOrigin = NSPoint(x: targetX, y: visibleFrame.minY - size.height - 20)
+        // Start position: above screen edge (hidden above menu bar)
+        slideOutOrigin = NSPoint(x: targetX, y: screen.frame.maxY + 20)
 
         setFrameOrigin(slideOutOrigin)
         alphaValue = 1
