@@ -185,30 +185,35 @@ final class BannerContentView: NSView {
             iconView.widthAnchor.constraint(equalToConstant: Banner.iconSize),
             iconView.heightAnchor.constraint(equalToConstant: Banner.iconSize),
 
-            // Row 1: [Badge] then [Title] — badge baseline-aligned with title first line
+            // Row 1: [Badge] then [Title] — top-aligned on the same row
             badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
             badge.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.paddingTop),
 
             titleLabel.leadingAnchor.constraint(
                 equalTo: badge.trailingAnchor, constant: Banner.badgeTitleGap),
             titleLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
-            titleLabel.firstBaselineAnchor.constraint(equalTo: badge.firstBaselineAnchor)
+            titleLabel.topAnchor.constraint(equalTo: badge.topAnchor)
         ]
 
         if let bodyLabel {
             constraints += [
                 bodyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
                 bodyLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
+                // Body must be below both the title and the badge
+                bodyLabel.topAnchor.constraint(
+                    greaterThanOrEqualTo: badge.bottomAnchor, constant: Banner.titleBodyGap),
                 bodyLabel.topAnchor.constraint(
                     equalTo: titleLabel.bottomAnchor, constant: Banner.titleBodyGap),
                 bodyLabel.bottomAnchor.constraint(
                     lessThanOrEqualTo: glass.bottomAnchor, constant: -Banner.paddingBottom)
             ]
         } else {
-            constraints.append(
+            constraints += [
                 titleLabel.bottomAnchor.constraint(
+                    lessThanOrEqualTo: glass.bottomAnchor, constant: -Banner.paddingBottom),
+                badge.bottomAnchor.constraint(
                     lessThanOrEqualTo: glass.bottomAnchor, constant: -Banner.paddingBottom)
-            )
+            ]
         }
 
         // Left column bottom constraint (ensure glass tall enough for icon)
