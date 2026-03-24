@@ -33,7 +33,7 @@ export function fallbackNotification(
       };
 
     case "stop": {
-      const body = truncate(event.last_assistant_message as string, 100);
+      const body = truncate(event.last_assistant_message, 100);
       log.info("fallback", "generating stop notification", {
         title: "Task Complete",
       });
@@ -61,7 +61,7 @@ export function fallbackNotification(
       });
       return {
         title: `${toolName} result`,
-        body: truncate(event.tool_response as string, 100),
+        body: truncate(event.tool_response, 100),
         source,
       };
     }
@@ -73,7 +73,7 @@ export function fallbackNotification(
       });
       return {
         title: `${toolName} failed`,
-        body: truncate(event.error as string, 100),
+        body: truncate(event.error, 100),
         source,
       };
     }
@@ -99,9 +99,9 @@ export function fallbackNotification(
 }
 
 function truncate(
-  s: string | undefined | null,
+  s: unknown,
   max: number,
 ): string | undefined {
-  if (!s) return undefined;
+  if (typeof s !== "string") return undefined;
   return s.length <= max ? s : `${s.slice(0, max)}...`;
 }
