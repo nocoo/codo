@@ -174,12 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc private func settingsDidSave() {
-        // Sync menu toggle state
         guardianToggleItem?.state = guardianSettings.guardianEnabled ? .on : .off
-
-        // Stop existing Guardian and restart with new config
-        guardian?.stop()
-        guardian = nil
         spawnGuardianIfNeeded()
     }
 
@@ -194,6 +189,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func spawnGuardianIfNeeded() {
+        // Stop any existing guardian before spawning a new one
+        if let existing = guardian {
+            existing.stop()
+            guardian = nil
+        }
         let enabled = guardianSettings.guardianEnabled
         let apiKey = KeychainService.readAPIKey()
         let guardianPath = GuardianPathResolver.resolve()
@@ -237,8 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - Daemon
 
     private func startDaemon() {
-        let provider = BannerProvider()
-        notificationService = NotificationService(provider: provider)
+        notificationService = NotificationService(provider: BannerProvider())
 
         if let service = notificationService {
             Task { _ = await service.requestPermission() }
