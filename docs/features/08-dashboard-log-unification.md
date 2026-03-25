@@ -357,7 +357,7 @@ const response = await sendToDaemon(payload);
 
 ---
 
-### Phase 1: EventStore — SQLite 持久层
+### Phase 1: EventStore — SQLite 持久层 ✅ DONE
 
 #### 1a. `Sources/CodoCore/EventStore.swift` — NEW
 
