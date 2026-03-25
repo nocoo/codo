@@ -78,8 +78,11 @@ hooklog DEBUG "event=$EVENT_NAME"
 
 # --- Map Claude Code event → codo hook type ---
 case "$EVENT_NAME" in
-  Stop|SubagentStop)
+  Stop)
     HOOK_TYPE="stop"
+    ;;
+  SubagentStop)
+    HOOK_TYPE="subagent-stop"
     ;;
   Notification)
     HOOK_TYPE="notification"

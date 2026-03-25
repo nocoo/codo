@@ -25,6 +25,7 @@ interface CodoResponse {
 
 export const VALID_HOOK_TYPES = new Set([
   "stop",
+  "subagent-stop",
   "notification",
   "post-tool-use",
   "post-tool-use-failure",

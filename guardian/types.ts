@@ -26,6 +26,7 @@ export interface NotificationPayload {
 
 export type HookEventName =
   | "stop"
+  | "subagent-stop"
   | "notification"
   | "post-tool-use"
   | "post-tool-use-failure"
