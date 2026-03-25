@@ -7,6 +7,7 @@ import {
   buildSystemPrompt,
   buildUserMessage,
   createLLMClient,
+  stringify,
 } from "./llm";
 import { createStateStore, updateState } from "./state";
 import type { GuardianConfig, HookEvent } from "./types";
@@ -439,5 +440,189 @@ describe("Anthropic LLM process", () => {
     const result = await client.process(event, state);
     expect(result.action).toBe("send");
     expect(result.notification?.title).toBe("Task Complete");
+  });
+});
+
+// ── stringify() edge cases ──
+
+describe("stringify", () => {
+  test("string within limit returned as-is", () => {
+    expect(stringify("hello", 10)).toBe("hello");
+  });
+
+  test("string exceeding limit is truncated with ellipsis", () => {
+    expect(stringify("abcdefghij", 5)).toBe("abcde...");
+  });
+
+  test("null returns empty string", () => {
+    expect(stringify(null, 100)).toBe("");
+  });
+
+  test("undefined returns empty string", () => {
+    expect(stringify(undefined, 100)).toBe("");
+  });
+
+  test("number is JSON.stringified", () => {
+    expect(stringify(42, 100)).toBe("42");
+  });
+
+  test("object is JSON.stringified", () => {
+    const result = stringify({ key: "value" }, 100);
+    expect(result).toBe('{"key":"value"}');
+  });
+
+  test("object exceeding limit is truncated", () => {
+    const result = stringify({ key: "value" }, 5);
+    expect(result).toBe('{"key...');
+    expect(result.length).toBe(8); // 5 + "..."
+  });
+
+  test("array is JSON.stringified", () => {
+    const result = stringify(["a", "b"], 100);
+    expect(result).toBe('["a","b"]');
+  });
+
+  test("boolean is JSON.stringified", () => {
+    expect(stringify(true, 100)).toBe("true");
+  });
+
+  test("circular reference falls back to String()", () => {
+    const obj: Record<string, unknown> = {};
+    obj.self = obj;
+    const result = stringify(obj, 100);
+    expect(result).toBe("[object Object]");
+  });
+});
+
+// ── buildUserMessage with object-typed HookEvent fields ──
+
+describe("buildUserMessage object payloads", () => {
+  test("stop with object last_assistant_message → JSON stringified", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "stop",
+        last_assistant_message: { text: "done", tokens: 42 },
+      }),
+    );
+    expect(msg).toContain("stop");
+    expect(msg).toContain('"text"');
+    expect(msg).toContain('"done"');
+    // Should NOT contain [object Object]
+    expect(msg).not.toContain("[object Object]");
+  });
+
+  test("stop with null last_assistant_message → no crash", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "stop",
+        last_assistant_message: null,
+      }),
+    );
+    expect(msg).toContain("stop");
+  });
+
+  test("post-tool-use with object tool_response → JSON stringified", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "post-tool-use",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: { stdout: "42 passed", exitCode: 0 },
+      }),
+    );
+    expect(msg).toContain("Bash");
+    expect(msg).toContain("npm test");
+    expect(msg).toContain('"stdout"');
+    expect(msg).toContain("42 passed");
+    expect(msg).not.toContain("[object Object]");
+  });
+
+  test("post-tool-use with array tool_response → JSON stringified", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "post-tool-use",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: ["line1", "line2"],
+      }),
+    );
+    expect(msg).toContain("line1");
+    expect(msg).toContain("line2");
+  });
+
+  test("post-tool-use-failure with object error → JSON stringified", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "post-tool-use-failure",
+        tool_name: "Bash",
+        error: { code: "ENOENT", message: "not found" },
+      }),
+    );
+    expect(msg).toContain("Bash");
+    expect(msg).toContain("ENOENT");
+    expect(msg).toContain("not found");
+    expect(msg).not.toContain("[object Object]");
+  });
+
+  test("post-tool-use with long object tool_response → truncated", () => {
+    const bigObj = { data: "x".repeat(600) };
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "post-tool-use",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: bigObj,
+      }),
+    );
+    expect(msg).toContain("...");
+    // The stringify limit is 500, so output should be bounded
+    const outputLine = msg.split("\n").find((l) => l.startsWith("Output:"));
+    expect(outputLine).toBeDefined();
+    // 500 chars + "..." + "Output: " prefix
+    expect(outputLine!.length).toBeLessThan(520);
+  });
+
+  test("post-tool-use with tool_input object extracts command", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "post-tool-use",
+        tool_name: "Bash",
+        tool_input: { command: "npm test", timeout: 5000 },
+        tool_response: "42 passed",
+      }),
+    );
+    expect(msg).toContain("npm test");
+    expect(msg).toContain("42 passed");
+  });
+
+  test("notification with all fields", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "notification",
+        title: "Permission",
+        message: "Allow access?",
+        notification_type: "permission_prompt",
+      }),
+    );
+    expect(msg).toContain("Permission");
+    expect(msg).toContain("Allow access?");
+    expect(msg).toContain("permission_prompt");
+  });
+
+  test("session-start with model", () => {
+    const msg = buildUserMessage(
+      makeEvent({
+        _hook: "session-start",
+        model: "claude-sonnet-4-6",
+      }),
+    );
+    expect(msg).toContain("session-start");
+    expect(msg).toContain("claude-sonnet-4-6");
+  });
+
+  test("session-end", () => {
+    const msg = buildUserMessage(makeEvent({ _hook: "session-end" }));
+    expect(msg).toContain("session-end");
+    expect(msg).toContain("Session ended");
   });
 });

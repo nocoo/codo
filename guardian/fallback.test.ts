@@ -136,4 +136,96 @@ describe("fallbackNotification", () => {
     );
     expect(result).toBeNull();
   });
+
+  // ── truncate hardening: object-typed HookEvent fields ──
+
+  test("Stop with object last_assistant_message → body undefined (not crash)", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "stop",
+        last_assistant_message: { text: "done", tokens: 42 },
+      }),
+    );
+    expect(result?.title).toBe("Task Complete");
+    expect(result?.body).toBeUndefined();
+  });
+
+  test("Stop with null last_assistant_message → body undefined", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "stop",
+        last_assistant_message: null,
+      }),
+    );
+    expect(result?.title).toBe("Task Complete");
+    expect(result?.body).toBeUndefined();
+  });
+
+  test("Stop with undefined last_assistant_message → body undefined", () => {
+    const result = fallbackNotification(
+      makeEvent({ _hook: "stop" }),
+    );
+    expect(result?.title).toBe("Task Complete");
+    expect(result?.body).toBeUndefined();
+  });
+
+  test("Stop with numeric last_assistant_message → body undefined", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "stop",
+        last_assistant_message: 12345,
+      }),
+    );
+    expect(result?.title).toBe("Task Complete");
+    expect(result?.body).toBeUndefined();
+  });
+
+  test("PostToolUse with object tool_response → body undefined (not crash)", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "post-tool-use",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: { stdout: "ok", exitCode: 0 },
+      }),
+    );
+    expect(result?.title).toBe("Bash result");
+    // truncate returns undefined for non-string input
+    expect(result?.body).toBeUndefined();
+  });
+
+  test("PostToolUseFailure with object error → body undefined (not crash)", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "post-tool-use-failure",
+        tool_name: "Bash",
+        error: { code: "ENOENT", message: "file not found" },
+      }),
+    );
+    expect(result?.title).toBe("Bash failed");
+    expect(result?.body).toBeUndefined();
+  });
+
+  test("PostToolUseFailure with array error → body undefined (not crash)", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "post-tool-use-failure",
+        tool_name: "Bash",
+        error: ["error1", "error2"],
+      }),
+    );
+    expect(result?.title).toBe("Bash failed");
+    expect(result?.body).toBeUndefined();
+  });
+
+  test("source extracted from cwd basename", () => {
+    const result = fallbackNotification(
+      makeEvent({
+        _hook: "notification",
+        title: "T",
+        cwd: "/Users/test/projects/my-app",
+      }),
+    );
+    expect(result?.source).toBe("my-app");
+  });
 });
