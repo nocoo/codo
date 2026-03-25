@@ -151,15 +151,15 @@ export function updateState(store: StateStore, event: HookEvent): void {
   });
 
   // Update project state based on hook type
-  if (!cwd) return; // session-end may lack cwd
+  if (!resolvedCwd) return; // session-end may lack cwd; resolvedCwd uses sessionToCwd fallback
 
-  const project = getOrCreateProject(store, cwd);
+  const project = getOrCreateProject(store, resolvedCwd);
   project.lastEventTime = Date.now();
 
   switch (event._hook) {
     case "session-start":
       if (cwd) {
-        store.sessionToCwd.set(event.session_id, canonicalizePath(cwd));
+        store.sessionToCwd.set(event.session_id, resolvedCwd);
       }
       project.sessionId = event.session_id;
       project.model = typeof event.model === "string" ? event.model : null;

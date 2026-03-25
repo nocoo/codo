@@ -715,6 +715,58 @@ describe("sessionToCwd resolution", () => {
     // Should NOT contain ".."
     expect(toolEvent?.cwd).not.toContain("..");
   });
+
+  test("session-end without cwd resolves via sessionToCwd and sets sessionActive false", () => {
+    const store = createStateStore();
+
+    // session-start registers sessionToCwd and sets sessionActive = true
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        session_id: "sess-end-1",
+        cwd: "/tmp/proj",
+      }),
+    );
+
+    const projCwd = canonicalizePath("/tmp/proj");
+    expect(store.projects.get(projCwd)?.sessionActive).toBe(true);
+
+    // session-end without cwd — should resolve via sessionToCwd and update project
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-end",
+        session_id: "sess-end-1",
+        cwd: undefined,
+      }),
+    );
+
+    expect(store.projects.get(projCwd)?.sessionActive).toBe(false);
+  });
+
+  test("session-end without cwd and no sessionToCwd entry: no crash, no spurious project", () => {
+    const store = createStateStore();
+
+    const projectCountBefore = store.projects.size;
+
+    // session-end with unknown session and no cwd — should be a no-op for project state
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-end",
+        session_id: "unknown-session",
+        cwd: undefined,
+      }),
+    );
+
+    // No new project created
+    expect(store.projects.size).toBe(projectCountBefore);
+    // Event is still buffered (with undefined cwd)
+    const endEvent = store.events.find((e) => e.hookType === "session-end");
+    expect(endEvent).toBeDefined();
+    expect(endEvent?.cwd).toBeUndefined();
+  });
 });
 
 describe("sessionToCwd cleanup", () => {
