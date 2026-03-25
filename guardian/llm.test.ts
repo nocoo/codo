@@ -133,13 +133,41 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Event History");
   });
 
-  test("empty state has role and tools only", () => {
+  test("empty state has role and tools only, no project data", () => {
     const store = createStateStore();
     const prompt = buildSystemPrompt(store);
     expect(prompt).toContain("通知助手");
     expect(prompt).toContain("send_notification");
+    // Empty state should not have Active Projects or event data sections
     expect(prompt).not.toContain("Active Projects");
-    expect(prompt).not.toContain("Recent Events");
+    // "Event History" appears in context guidance rules (static),
+    // but NOT as a "## Event History" data section
+    expect(prompt).not.toContain("## Event History");
+  });
+
+  test("accepts contextLimit parameter and includes context guidance", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        model: "test-model",
+      }),
+    );
+
+    const prompt = buildSystemPrompt(store, 8000);
+    expect(prompt).toContain("上下文利用");
+    expect(prompt).toContain("Event History");
+    expect(prompt).toContain("Sent Notifications");
+  });
+
+  test("contextLimit defaults to 160k when not provided", () => {
+    const store = createStateStore();
+    // Should not throw and should produce a valid prompt
+    const prompt = buildSystemPrompt(store);
+    expect(prompt).toContain("通知助手");
+    expect(prompt).toContain("上下文利用");
   });
 });
 
@@ -565,7 +593,7 @@ describe("buildUserMessage object payloads", () => {
   });
 
   test("post-tool-use with long object tool_response → truncated", () => {
-    const bigObj = { data: "x".repeat(600) };
+    const bigObj = { data: "x".repeat(2100) };
     const msg = buildUserMessage(
       makeEvent({
         _hook: "post-tool-use",
@@ -575,11 +603,11 @@ describe("buildUserMessage object payloads", () => {
       }),
     );
     expect(msg).toContain("...");
-    // The stringify limit is 500, so output should be bounded
+    // The stringify limit is 2000, so output should be bounded
     const outputLine = msg.split("\n").find((l) => l.startsWith("Output:"));
     expect(outputLine).toBeDefined();
-    // 500 chars + "..." + "Output: " prefix
-    expect(outputLine!.length).toBeLessThan(520);
+    // 2000 chars + "..." + "Output: " prefix
+    expect(outputLine!.length).toBeLessThan(2020);
   });
 
   test("post-tool-use with tool_input object extracts command", () => {

@@ -89,7 +89,16 @@ export const ANTHROPIC_TOOLS: Anthropic.Tool[] = TOOLS.map((t) => ({
   input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
 }));
 
-export function buildSystemPrompt(state: StateStore): string {
+export function buildSystemPrompt(
+  state: StateStore,
+  contextLimit: number = 160_000,
+): string {
+  // ~3 chars/token rough estimate; used as soft upper limit only.
+  // Clamp to [2_000, 600_000] — floor prevents negative/tiny budgets on
+  // ultra-small context models, ceiling prevents wasteful over-allocation.
+  const rawBudget = (contextLimit - 2024) * 3;
+  const charBudget = Math.min(Math.max(rawBudget, 2_000), 600_000);
+
   const parts: string[] = [
     "你是一个开发者编码会话的AI通知助手。",
     "你的职责是判断是否发送macOS通知，并撰写简洁的中文摘要。",
@@ -108,10 +117,16 @@ export function buildSystemPrompt(state: StateStore): string {
     "- 抑制噪声：日常文件操作、短命令、重复状态更新",
     "- 用 threadId 分组相关通知，避免重复",
     "",
+    "## 上下文利用",
+    "- Event History 包含该项目的近期事件流，利用它理解任务进展",
+    "- Sent Notifications 列出之前已发送的通知，避免发送相似内容",
+    '- 如果某个任务经历了多次失败后成功，在通知中体现这个过程（如"经过多轮调试，XXX终于通过"）',
+    "- 如果当前事件是一系列操作的最终结果，总结整个过程而非仅描述最后一步",
+    "",
     "可用工具：send_notification, suppress",
   ];
 
-  const stateStr = serializeForPrompt(state);
+  const stateStr = serializeForPrompt(state, charBudget);
   if (stateStr) {
     parts.push("", "# Current State", "", stateStr);
   }
@@ -144,7 +159,7 @@ export function buildUserMessage(event: HookEvent): string {
     case "stop":
       if (event.last_assistant_message) {
         parts.push(
-          `Last assistant message: ${stringify(event.last_assistant_message, 500)}`,
+          `Last assistant message: ${stringify(event.last_assistant_message, 2000)}`,
         );
       }
       break;
@@ -169,7 +184,7 @@ export function buildUserMessage(event: HookEvent): string {
       }
       if (event.tool_response) {
         parts.push(
-          `Output: ${stringify(event.tool_response, 500)}`,
+          `Output: ${stringify(event.tool_response, 2000)}`,
         );
       }
       break;
@@ -179,7 +194,7 @@ export function buildUserMessage(event: HookEvent): string {
         parts.push(`Tool: ${String(event.tool_name)}`);
       }
       if (event.error) {
-        parts.push(`Error: ${stringify(event.error, 500)}`);
+        parts.push(`Error: ${stringify(event.error, 2000)}`);
       }
       break;
 
@@ -282,9 +297,17 @@ function createOpenAILLMClient(
       state: StateStore,
     ): Promise<GuardianResult> {
       try {
+        const systemPrompt = buildSystemPrompt(state, config.contextLimit);
+        const userMessage = buildUserMessage(event);
+
         log.debug("openai.req", "sending request", {
           model: config.model,
           hook: event._hook,
+          systemPrompt_chars: String(systemPrompt.length),
+          userMessage_chars: String(userMessage.length),
+          estimated_tokens: String(
+            Math.round((systemPrompt.length + userMessage.length) / 3),
+          ),
         });
 
         const controller = new AbortController();
@@ -298,8 +321,8 @@ function createOpenAILLMClient(
           {
             model: config.model,
             messages: [
-              { role: "system", content: buildSystemPrompt(state) },
-              { role: "user", content: buildUserMessage(event) },
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMessage },
             ],
             tools: TOOLS,
             tool_choice: "required",
@@ -370,9 +393,17 @@ function createAnthropicLLMClient(
       state: StateStore,
     ): Promise<GuardianResult> {
       try {
+        const systemPrompt = buildSystemPrompt(state, config.contextLimit);
+        const userMessage = buildUserMessage(event);
+
         log.debug("anthropic.req", "sending request", {
           model: config.model,
           hook: event._hook,
+          systemPrompt_chars: String(systemPrompt.length),
+          userMessage_chars: String(userMessage.length),
+          estimated_tokens: String(
+            Math.round((systemPrompt.length + userMessage.length) / 3),
+          ),
         });
 
         const controller = new AbortController();
@@ -386,9 +417,9 @@ function createAnthropicLLMClient(
           {
             model: config.model,
             max_tokens: 1024,
-            system: buildSystemPrompt(state),
+            system: systemPrompt,
             messages: [
-              { role: "user", content: buildUserMessage(event) },
+              { role: "user", content: userMessage },
             ],
             tools: ANTHROPIC_TOOLS,
             tool_choice: { type: "any" },
