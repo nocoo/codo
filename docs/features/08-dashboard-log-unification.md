@@ -251,7 +251,7 @@ CREATE TABLE projects (
 |----|---------|------|
 | Guardian TS (`state.ts`) | `realpathSync(cwd)` ✅ 已有 | 不变 |
 | Guardian TS → stdout | 原始 cwd 透传 | `emitAction` 前对 cwd 调用 `realpathSync` |
-| Swift `DashboardStore` | 原始 cwd 直接用 | 新增 `canonicalizeCwd(_:)` 用 `NSString.resolvingSymlinksInPath`（解析 symlink + 去除 `/private` 前缀） |
+| Swift `DashboardStore` | 原始 cwd 直接用 | 新增 `canonicalizeCwd(_:)` 用 `NSString.resolvingSymlinksInPath`（best-effort symlink 解析） |
 | Swift `EventStore` | 不存在 | 所有 INSERT 前统一 canonicalize |
 | CLI `codo.ts` | 不涉及（cwd 来自 hook payload 或 `process.cwd()`） | 显式 `realpathSync(process.cwd())`，失败时 fallback 原值。`process.cwd()` 不保证 canonical（如通过 symlink 进入的目录） |
 
@@ -259,8 +259,9 @@ CREATE TABLE projects (
 // Sources/CodoCore/PathUtils.swift — NEW (~10 lines)
 import Foundation
 
-/// Resolve symlinks and normalize path components (including /private prefix on macOS).
-/// Uses NSString.resolvingSymlinksInPath which handles both symlinks and /private normalization.
+/// Best-effort symlink resolution using NSString.resolvingSymlinksInPath.
+/// Note: behavior may differ from POSIX realpath(3) in edge cases (e.g. /private prefix handling).
+/// If exact parity with TS realpathSync is needed, consider wrapping Darwin.realpath() instead.
 /// Falls back to original input on empty result.
 public func canonicalizeCwd(_ path: String) -> String {
     let resolved = (path as NSString).resolvingSymlinksInPath
@@ -318,24 +319,29 @@ cwd 规范化工具函数（见上文 Architecture 部分）。
 
 #### 0e. `cli/codo.ts` — MODIFY
 
-普通模式（非 `--hook`）发送 CodoMessage 时追加 canonicalized cwd：
+当前 CLI 有两条普通路径（非 `--hook`）：
+- **args 路径**（L422-431）：`parseArgs(argv)` 构造 `CodoMessage`
+- **stdin 路径**（L432-440）：`parseStdin(stdinText)` 解析 JSON 构造 `CodoMessage`
+
+两条路径最终都汇聚到 L448 `sendToDaemon(message)`。**cwd 注入点应在 `sendToDaemon` 调用前统一补齐**，而不是分别改 `parseArgs` / `parseStdin`，这样覆盖所有 direct notification 路径：
 
 ```typescript
 import { realpathSync } from "node:fs";
 
-function getCwd(): string {
+function getCwd(): string | undefined {
   try {
     return realpathSync(process.cwd());
   } catch {
-    return process.cwd(); // fallback to raw value
+    try { return process.cwd(); } catch { return undefined; }
   }
 }
 
-// In CodoMessage construction:
-{ title: "...", cwd: getCwd() }
+// In main(), before sendToDaemon:
+const payload: Record<string, unknown> = { ...message, cwd: getCwd() };
+const response = await sendToDaemon(payload);
 ```
 
-`process.cwd()` 不保证 canonical（如通过 symlink cd 进入的目录），必须显式 `realpathSync` 与 TS 侧 `guardian/state.ts` 的 `canonicalizePath` 行为一致。
+`process.cwd()` 不保证 canonical（如通过 symlink cd 进入的目录），必须显式 `realpathSync` 与 TS 侧 `guardian/state.ts` 的 `canonicalizePath` 行为一致。外层 try/catch 兜底 `process.cwd()` 本身可能抛（如 cwd 已被删除）。
 
 #### 0f. `guardian/types.ts` — MODIFY
 
@@ -506,12 +512,20 @@ export interface GuardianAction {
 **所有 `emitAction` 调用路径统一走 meta builder**。当前 `processHookEvent` 有三条 `emitAction` 路径（main.ts L136, L144, L83-93），每条都需要补齐基础 meta：
 
 ```typescript
+import { realpathSync } from "node:fs";
+
+// Safe canonicalize — realpathSync throws if path doesn't exist
+function safeCanonicalize(cwd: string | undefined): string | undefined {
+  if (!cwd) return undefined;
+  try { return realpathSync(cwd); } catch { return cwd; }
+}
+
 // 新增 helper：构建基础 meta（所有路径共享）
 function buildBaseMeta(event: HookEvent, tier: string): GuardianActionMeta {
   return {
     tier,
     session_id: event.session_id,
-    cwd: event.cwd ? realpathSync(event.cwd) : undefined,
+    cwd: safeCanonicalize(event.cwd),
     hook_type: event._hook,
   };
 }
@@ -540,15 +554,15 @@ if (notification) {
   });
 }
 
-// 路径 3: direct CodoMessage (main.ts L80-96) — 非 hook 事件，meta 有限
+// 路径 3: direct CodoMessage (main.ts L80-96) — 兼容路径（见下方说明）
 emitAction({
   action: "send",
   notification: { title: parsed.title, ... },
-  meta: { cwd: parsed.cwd ? realpathSync(parsed.cwd) : undefined },
+  meta: { cwd: safeCanonicalize(parsed.cwd as string | undefined) },
 });
 ```
 
-这样确保 **所有** emitAction 输出都携带 `meta.cwd` 和 `meta.session_id`（在可用时），Swift 侧不会出现部分事件丢项目归属或上下文的情况。
+**路径 3 注意**：当前真实架构中，direct notification（无 `_hook` 字段）走的是 `MessageRouter.notification` → `NotificationService.post()` 路径（AppDelegate.swift L257-261），**不会进入 Guardian stdin**。Guardian main.ts L80-96 的 direct CodoMessage 处理是防御性兼容代码。此处补 meta 仅为协议一致性，不是主链路依赖。
 
 #### 2c. `Sources/CodoCore/GuardianProtocol.swift` — MODIFY
 
@@ -901,7 +915,7 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 | `guardian/main.ts` | Unified meta builder for all emitAction paths (~30 lines) |
 | `guardian/llm.ts` | Return token usage from `process()` (~15 lines) |
 | `guardian/main.test.ts` | Adapt tests for new meta field (~10 lines) |
-| `cli/codo.ts` | Add `cwd: realpathSync(process.cwd())` to CodoMessage (~8 lines) |
+| `cli/codo.ts` | Add `getCwd()` helper + inject cwd before `sendToDaemon` (~10 lines) |
 | `Sources/Codo/Dashboard/Views/SidebarView.swift` | Project filter tap interaction (~10 lines) |
 | `Sources/Codo/Dashboard/Views/DetailContainerView.swift` | Add History case + adjust keyboard shortcuts (~10 lines) |
 | `Sources/Codo/Dashboard/Views/StatsCard.swift` | Multi-period stats, token usage (~30 lines) |
