@@ -4,17 +4,32 @@
 
 Dashboard 和 Guardian 日志系统之间存在**数据断裂**，导致 Dashboard 无法完整展示运行情况和历史记录。
 
+### 现状精确描述
+
+**持久化的数据**：
+- `projects: [ProjectInfo]` — 已持久化在 `UserDefaults(key: "CodoDashboardProjects")`，app 重启后保留
+- `guardian.log` / `hooks.log` — 纯文本追加，无结构化，无轮转（guardian.log 当前 3.3MB）
+
+**重启丢失的数据**：
+- `events: [EventEntry]` — 内存 ring buffer 200 条（DashboardStore.swift L34-36）
+- `notificationsSent` / `notificationsSuppressed` — 内存计数器（DashboardStore.swift L29-30）
+- `activeSessions: [SessionInfo]` — 内存数组（DashboardStore.swift L39）
+- Guardian TS 侧 `StateStore.events: BufferedEvent[]` — 独立的 200 条内存 ring buffer（state.ts L37）
+- Guardian TS 侧 `StateStore.projects[].recentNotifications` — 每个项目最近 10 条通知（state.ts L15），不是 200 条 ring buffer
+
 ### 现状问题一览
 
 | # | 问题 | 影响 |
 |---|------|------|
-| 1 | Dashboard 事件/统计纯内存，app 重启归零 | 无法查看历史运行数据 |
-| 2 | guardian.log 无轮转，无限增长（当前 3.3MB） | 磁盘浪费，LogsView 只读尾部 32KB 无法回溯 |
-| 3 | Guardian (TS) 和 DashboardStore (Swift) 两套独立状态 | 数据不一致，LLM token 用量等高价值数据只存在 guardian.log 文本中 |
-| 4 | 通知历史不持久化 | StateStore 内存 ring buffer 200 条，重启丢失 |
-| 5 | LogsView 是原始文本尾读，无结构化筛选 | 无法按项目/时间/类型过滤日志 |
-| 6 | 直接通知（无 `_hook` 字段）不进入 DashboardStore | 通过 `echo '{"title":...}' \| bun codo.ts` 发送的通知在 Dashboard 不可见 |
-| 7 | LLM 调用成本/token 用量无结构化追踪 | 只能 grep guardian.log 事后挖掘 |
+| 1 | Dashboard events/stats 纯内存，app 重启丢失（projects 已持久化除外） | 无法查看历史事件和累计统计 |
+| 2 | guardian.log 无轮转，无限增长 | 磁盘浪费，LogsView 只读尾部 32KB 无法回溯 |
+| 3 | Guardian TS 侧 StateStore 和 Swift 侧 DashboardStore 两套独立状态 | LLM token 用量等高价值数据只存在 guardian.log 文本中，Dashboard 看不到 |
+| 4 | LogsView 是原始文本尾读，无结构化筛选 | 无法按项目/时间/类型过滤日志 |
+| 5 | 直接通知（无 `_hook` 字段）不进入 DashboardStore | 通过 `echo '{"title":...}' \| bun codo.ts` 发送的通知在 Dashboard 不可见 |
+| 6 | GuardianAction stdout 不携带决策上下文 | tier/reason/tokens/latency 只写入 stderr 日志，Swift 侧仅知 send/suppress |
+| 7 | EventEntry 模型缺少 `projectCwd` | 只有 `projectName`（basename），同名项目不可区分，无法可靠做项目过滤 |
+| 8 | CodoMessage 没有 `cwd` 字段 | 直接通知无法归属到具体项目 |
+| 9 | Swift 侧无 cwd 规范化 | TS 侧有 `realpathSync` 做 canonicalize，Swift 侧 DashboardStore 直接用原始 cwd，可能一个项目产生多个 key |
 
 ### 数据流断裂图
 
@@ -36,32 +51,50 @@ Dashboard 和 Guardian 日志系统之间存在**数据断裂**，导致 Dashboa
 │                       │      │                     │            │
 │                       │      ▼                     ▼            │
 │                       │   DashboardStore    NotificationService  │
-│                       │   (内存 ring buf)   (直接发送，不记录)   │  ◄── 断裂点❶
+│                       │   (内存 events)    (直接发送，不记录)    │  ◄── 断裂点❶
 │                       │                                         │
 │                       ▼                                         │
 │                   Guardian (TS)                                  │
-│                   ├─ StateStore (内存，独立于 Swift 侧)          │  ◄── 断裂点❷
+│                   ├─ StateStore.events[] (内存 200 条)           │
+│                   │  StateStore.projects[].recentNotifications   │
+│                   │  (每项目最近 10 条通知，独立于 Swift 侧)     │  ◄── 断裂点❷
 │                   ├─ stderr → guardian.log (纯文本，无轮转)      │  ◄── 断裂点❸
-│                   └─ stdout → GuardianAction → DashboardStore   │
-│                                (仅 send/suppress 计数)          │  ◄── 断裂点❹
+│                   └─ stdout → GuardianAction                    │
+│                      {action, notification?, reason?}            │
+│                      → DashboardStore (仅 send/suppress 计数)   │  ◄── 断裂点❹
 │                                                                 │
 │  断裂点❶: 直接通知绕过 DashboardStore                            │
-│  断裂点❷: TS/Swift 两套状态各管各的                              │
+│  断裂点❷: TS/Swift 两套状态各管各的，通知历史在 TS 按项目分组     │
 │  断裂点❸: guardian.log 是唯一的"持久层"但是纯文本                 │
-│  断裂点❹: Guardian 决策的丰富信息(tier/reason/tokens)不回传       │
+│  断裂点❹: Guardian 决策的丰富信息(tier/tokens/latency)不回传      │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 关键现状代码引用
+
+| 现状 | 文件 | 行号/字段 |
+|------|------|-----------|
+| `GuardianAction` 结构 | `Sources/CodoCore/GuardianProtocol.swift` L4-14 | `{action, notification: CodoMessage?, reason?}` |
+| `GuardianAction` TS 定义 | `guardian/types.ts` L6-10 | `{action, notification?: NotificationPayload, reason?}` |
+| `CodoMessage` 无 cwd | `Sources/CodoCore/CodoMessage.swift` L4-11 | 仅 title/body/subtitle/source/sound/threadId |
+| `EventEntry` 无 projectCwd | `Sources/Codo/Dashboard/Models/EventEntry.swift` L4-11 | 仅 id/timestamp/hookType/projectName/summary/action |
+| guardian.log handle 长期持有 | `Sources/CodoCore/GuardianProcess.swift` L311-353 | `readStderrLoop` 打开 logHandle 直到 EOF，无中途 reopen |
+| LogsView 文件监听 | `Sources/Codo/Dashboard/Views/LogsView.swift` L49-68 | `DispatchSource.makeFileSystemObjectSource(.write)` 绑定到 fd，文件 rename 后不会跟踪新文件 |
+| TS 侧 cwd 规范化 | `guardian/state.ts` L54-60 | `canonicalizePath()` 用 `realpathSync` |
+| Swift 侧无规范化 | `Sources/Codo/Dashboard/DashboardStore.swift` L164-169 | `discoverProject(cwd:)` 直接用原始 cwd 字符串作为 key |
+| LLM token 用量仅 stderr | `guardian/llm.ts` | `usage_prompt/usage_completion`（OpenAI）或 `usage_input/usage_output`（Anthropic）只写 logger |
 
 ---
 
 ## Design Goals
 
 1. **Dashboard 能完整看到运行情况** — 包括直接通知、Guardian 决策详情、LLM token 用量
-2. **历史 log 分项目** — 按 project (cwd) 筛选事件，可回溯数天
-3. **App 重启不丢数据** — 事件、统计、通知历史持久化
-4. **guardian.log 可控** — 轮转 + 结构化存储双轨并行
-5. **最小侵入** — 复用现有 IPC 管道，不引入新外部依赖
+2. **历史 log 分项目** — 按 project (canonical cwd) 筛选事件，可回溯数天
+3. **App 重启不丢关键数据** — events、stats 持久化（projects 已有持久化，保持兼容）
+4. **guardian.log 可控** — 轮转 + reopen + LogsView 跟踪新文件
+5. **cwd 全链路规范化** — TS / Swift / SQLite 统一 canonical cwd
+6. **最小侵入** — 复用现有 IPC 管道，不引入新外部依赖
 
 ---
 
@@ -69,7 +102,7 @@ Dashboard 和 Guardian 日志系统之间存在**数据断裂**，导致 Dashboa
 
 ### 新增持久层：SQLite
 
-引入 SQLite 作为唯一结构化持久存储（替代 UserDefaults + 纯文本日志的拼凑方案）。
+引入 SQLite 作为结构化持久存储（补充现有 UserDefaults projects 持久化）。
 
 **理由**：
 - macOS 原生支持（`import SQLite3`），零外部依赖
@@ -89,7 +122,7 @@ CREATE TABLE events (
     type        TEXT    NOT NULL,  -- 'hook' | 'notification' | 'guardian_action'
     hook_type   TEXT,              -- 'session-start' | 'stop' | 'post-tool-use' | ...
     session_id  TEXT,
-    project_cwd TEXT,              -- canonical cwd path
+    project_cwd TEXT,              -- canonical cwd path (realpath), 直接通知可为 NULL
     project_name TEXT,             -- basename of cwd
     summary     TEXT,
     raw_json    TEXT,              -- complete original JSON for replay/debug
@@ -110,7 +143,7 @@ CREATE TABLE guardian_decisions (
     tier            TEXT,           -- 'important' | 'contextual' | 'noise'
     action          TEXT,           -- 'send' | 'suppress'
     title           TEXT,           -- notification title (if sent)
-    reason          TEXT,           -- LLM reasoning
+    reason          TEXT,           -- LLM reasoning / suppress reason
     model           TEXT,           -- LLM model used
     prompt_tokens   INTEGER,
     completion_tokens INTEGER,
@@ -135,13 +168,30 @@ CREATE TABLE daily_stats (
 
 -- 项目表（从 UserDefaults 迁移）
 CREATE TABLE projects (
-    cwd             TEXT    PRIMARY KEY,
+    cwd             TEXT    PRIMARY KEY,  -- canonical path
     name            TEXT    NOT NULL,
     custom_logo_path TEXT,
     last_seen       TEXT    NOT NULL,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 ```
+
+### 直接通知的项目归属策略
+
+当前 `CodoMessage` 没有 `cwd` 字段。直接通知（`echo '{"title":...}' | bun codo.ts`）无法可靠归属到项目。
+
+**选择方案 2：给 CodoMessage 新增可选 cwd 字段**
+
+理由：
+- CLI 端（`codo.ts`）在 `--hook` 模式下已经从 hook payload 中获取 cwd，普通模式可以从 `process.cwd()` 获取
+- 这使得直接通知也能归属到项目，同时保持向后兼容（cwd 可选）
+- `source` 字段保留为显示名（basename），`cwd` 作为精确的项目标识符
+
+改动范围：
+- `Sources/CodoCore/CodoMessage.swift` — 新增 `public let cwd: String?`
+- `cli/codo.ts` — 在普通模式下追加 `cwd: process.cwd()` 到 JSON
+- `guardian/types.ts` — `NotificationPayload` 新增可选 `cwd?: string`
+- 对于仍然不带 cwd 的直接通知（旧版 CLI），`project_cwd` 在 SQLite 中存为 NULL
 
 ### 改造后的数据流
 
@@ -163,22 +213,19 @@ CREATE TABLE projects (
 │                       │      │                     │            │
 │                       │      ▼                     ▼            │
 │                       │   DashboardStore ◄── [NEW] 直接通知也入库│
-│                       │      │                                  │
+│                       │      │               (CodoMessage.cwd)  │
 │                       │      ▼                                  │
 │                       │   EventStore (SQLite)  ◄── 持久化       │
 │                       │                                         │
 │                       ▼                                         │
 │                   Guardian (TS)                                  │
 │                   ├─ StateStore (内存，不变)                     │
-│                   ├─ stderr → guardian.log (保留，加轮转)        │
+│                   ├─ stderr → guardian.log (保留，加轮转+reopen) │
 │                   └─ stdout → GuardianAction                    │
-│                               │                                 │
-│                               ▼                                 │
-│                    [ENHANCED] GuardianAction                     │
-│                    {action, title, body,                         │
-│                     tier, reason, model,       ◄── 新增字段      │
-│                     prompt_tokens, completion_tokens,            │
-│                     latency_ms, session_id, cwd}                │
+│                      {action, notification?, reason?,            │
+│                       meta?: {tier, model,         ◄── 新增字段  │
+│                               prompt_tokens, completion_tokens,  │
+│                               latency_ms, session_id, cwd}}     │
 │                               │                                 │
 │                               ▼                                 │
 │                   DashboardStore.ingestGuardianAction()          │
@@ -189,9 +236,94 @@ CREATE TABLE projects (
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### cwd 规范化统一方案
+
+全链路统一使用 canonical (realpath) cwd：
+
+| 层 | 当前状态 | 改造 |
+|----|---------|------|
+| Guardian TS (`state.ts`) | `realpathSync(cwd)` ✅ 已有 | 不变 |
+| Guardian TS → stdout | 原始 cwd 透传 | `emitAction` 前对 cwd 调用 `realpathSync` |
+| Swift `DashboardStore` | 原始 cwd 直接用 | 新增 `canonicalizeCwd(_:)` 调用 `realpath(3)` C 函数 |
+| Swift `EventStore` | 不存在 | 所有 INSERT 前统一 canonicalize |
+| CLI `codo.ts` | 不涉及（cwd 来自 hook payload 或 `process.cwd()`） | `process.cwd()` 在 POSIX 上已经是 realpath |
+
+```swift
+// Sources/CodoCore/PathUtils.swift — NEW (~10 lines)
+import Foundation
+
+/// Resolve symlinks and relative components. Falls back to input on failure.
+public func canonicalizeCwd(_ path: String) -> String {
+    let resolved = (path as NSString).resolvingSymlinksInPath
+    return resolved.isEmpty ? path : resolved
+}
+```
+
 ---
 
 ## Implementation Phases
+
+### Phase 0: 数据模型修正（前置依赖）
+
+在做任何持久化或过滤之前，先补齐数据模型的缺失字段。
+
+#### 0a. `Sources/Codo/Dashboard/Models/EventEntry.swift` — MODIFY
+
+新增 `projectCwd` 字段，使项目过滤有可靠的精确匹配依据：
+
+```swift
+struct EventEntry: Identifiable {
+    let id: UUID
+    let timestamp: Date
+    let hookType: String
+    let projectCwd: String?     // NEW: canonical cwd for filtering
+    let projectName: String?    // display name (basename)
+    let summary: String
+    let action: String?
+}
+```
+
+#### 0b. `Sources/CodoCore/CodoMessage.swift` — MODIFY
+
+新增可选 `cwd` 字段（向后兼容）：
+
+```swift
+public struct CodoMessage: Codable, Sendable {
+    public let title: String
+    public let body: String?
+    public let subtitle: String?
+    public let source: String?
+    public let sound: String?
+    public let threadId: String?
+    public let cwd: String?     // NEW: canonical cwd for project attribution
+}
+```
+
+#### 0c. `Sources/CodoCore/PathUtils.swift` — NEW
+
+cwd 规范化工具函数（见上文 Architecture 部分）。
+
+#### 0d. `Sources/Codo/Dashboard/DashboardStore.swift` — MODIFY
+
+在 `discoverProject(cwd:)` 和 `ingestHookEvent(_:)` 中调用 `canonicalizeCwd()` 后再使用 cwd。
+
+#### 0e. `cli/codo.ts` — MODIFY
+
+普通模式（非 `--hook`）发送 CodoMessage 时追加 `cwd: process.cwd()`。
+
+#### 0f. `guardian/types.ts` — MODIFY
+
+`NotificationPayload` 新增 `cwd?: string`。
+
+**涉及文件**：
+- `Sources/Codo/Dashboard/Models/EventEntry.swift` — MODIFY
+- `Sources/CodoCore/CodoMessage.swift` — MODIFY
+- `Sources/CodoCore/PathUtils.swift` — NEW
+- `Sources/Codo/Dashboard/DashboardStore.swift` — MODIFY
+- `cli/codo.ts` — MODIFY
+- `guardian/types.ts` — MODIFY
+
+---
 
 ### Phase 1: EventStore — SQLite 持久层
 
@@ -208,13 +340,13 @@ public final class EventStore: @unchecked Sendable {
     public func insertEvent(_ event: EventRecord)
     public func insertDecision(_ decision: DecisionRecord)
     public func queryEvents(
-        project: String? = nil,
+        project: String? = nil,    // canonical cwd
         type: String? = nil,
         since: Date? = nil,
         limit: Int = 200
     ) -> [EventRecord]
     public func queryDecisions(
-        project: String? = nil,
+        project: String? = nil,    // canonical cwd
         since: Date? = nil,
         limit: Int = 100
     ) -> [DecisionRecord]
@@ -224,7 +356,7 @@ public final class EventStore: @unchecked Sendable {
     ) -> [DailyStatsRecord]
     public func upsertProject(_ project: ProjectRecord)
     public func loadProjects() -> [ProjectRecord]
-    public func vacuum(keepDays: Int = 30)  // 清理超过 N 天的旧数据
+    public func vacuum(keepDays: Int = 30)
 }
 ```
 
@@ -233,6 +365,7 @@ public final class EventStore: @unchecked Sendable {
 - **WAL 模式**：`PRAGMA journal_mode=WAL` — 支持 Dashboard 读取同时写入
 - **自动清理**：`vacuum()` 清除超过 30 天的数据，由 app 启动时调用
 - **不用 Core Data**：过重，且 Codo 是 `.accessory` 模式无需 iCloud 同步
+- **所有 cwd 入库前必须 canonicalize**：调用 `canonicalizeCwd()` 确保一致性
 
 #### 1b. Record types (`Sources/CodoCore/EventStoreRecords.swift`) — NEW
 
@@ -242,7 +375,7 @@ public struct EventRecord: Codable, Sendable {
     public let type: String          // "hook" | "notification" | "guardian_action"
     public let hookType: String?
     public let sessionId: String?
-    public let projectCwd: String?
+    public let projectCwd: String?   // canonical path, NULL for unattributed notifications
     public let projectName: String?
     public let summary: String
     public let rawJson: String?
@@ -275,7 +408,7 @@ public struct DailyStatsRecord: Codable, Sendable {
 }
 
 public struct ProjectRecord: Codable, Sendable {
-    public let cwd: String
+    public let cwd: String           // canonical path
     public let name: String
     public let customLogoPath: String?
     public let lastSeen: Date
@@ -285,7 +418,7 @@ public struct ProjectRecord: Codable, Sendable {
 #### 1c. Tests (`Tests/CodoCoreTests/EventStoreTests.swift`) — NEW
 
 - 内存 SQLite (`:memory:`) 测试 CRUD
-- 按 project 过滤查询
+- 按 project 过滤查询（使用 canonical cwd）
 - vacuum 清理旧数据
 - 并发读写安全
 
@@ -296,70 +429,131 @@ public struct ProjectRecord: Codable, Sendable {
 
 ---
 
-### Phase 2: Guardian stdout 扩展
+### Phase 2: 扩展现有 GuardianAction 协议
 
-当前 Guardian stdout 输出的 `GuardianAction` 只有 `{action, title, body}` 三个字段。需要扩展为包含决策上下文。
+当前 `GuardianAction` 在两侧的定义：
 
-#### 2a. `guardian/main.ts` — MODIFY
-
-在 LLM 调用完成后，将决策元数据附加到 stdout JSON：
-
+**TS 侧** (`guardian/types.ts` L6-10)：
 ```typescript
-// 当前（精简）
-const output = { action: "send", title: "...", body: "..." };
-process.stdout.write(JSON.stringify(output) + "\n");
-
-// 改造后（丰富）
-const output = {
-  action: "send",
-  title: "...",
-  body: "...",
-  // New fields:
-  tier: classification.tier,
-  reason: llmResult.reason,
-  model: config.model,
-  prompt_tokens: usage?.promptTokens,
-  completion_tokens: usage?.completionTokens,
-  latency_ms: elapsed,
-  session_id: event.session_id,
-  cwd: event.cwd,
-};
-process.stdout.write(JSON.stringify(output) + "\n");
+export interface GuardianAction {
+  action: "send" | "suppress";
+  notification?: NotificationPayload;
+  reason?: string;
+}
 ```
 
-#### 2b. `Sources/CodoCore/GuardianAction.swift` — MODIFY
+**Swift 侧** (`Sources/CodoCore/GuardianProtocol.swift` L4-14)：
+```swift
+public struct GuardianAction: Codable, Sendable {
+    public let action: String
+    public let notification: CodoMessage?
+    public let reason: String?
+}
+```
 
-扩展 `GuardianAction` 结构体：
+扩展方式：新增可选 `meta` 字段包含决策上下文，保持现有 `notification` + `reason` 结构不变。
+
+#### 2a. `guardian/types.ts` — MODIFY
+
+```typescript
+export interface GuardianActionMeta {
+  tier?: string;           // classification tier
+  model?: string;          // LLM model used
+  prompt_tokens?: number;  // OpenAI: prompt_tokens, Anthropic: input_tokens
+  completion_tokens?: number; // OpenAI: completion_tokens, Anthropic: output_tokens
+  latency_ms?: number;     // LLM round-trip time
+  session_id?: string;
+  cwd?: string;            // canonical cwd
+  hook_type?: string;      // triggering hook type
+}
+
+export interface GuardianAction {
+  action: "send" | "suppress";
+  notification?: NotificationPayload;
+  reason?: string;
+  meta?: GuardianActionMeta;  // NEW
+}
+```
+
+#### 2b. `guardian/main.ts` — MODIFY
+
+在 `processHookEvent` 中，LLM 调用完成后填充 `meta`：
+
+```typescript
+// 当前代码 (main.ts L122-136)
+const t0 = performance.now();
+const result = await llmClient.process(event, state);
+const elapsed = Math.round(performance.now() - t0);
+// ... existing logging ...
+emitAction(result);
+
+// 改造后
+const t0 = performance.now();
+const result = await llmClient.process(event, state);
+const elapsed = Math.round(performance.now() - t0);
+// ... existing logging ...
+emitAction({
+  ...result,
+  meta: {
+    tier,
+    model: /* from config, need to thread through */,
+    latency_ms: elapsed,
+    session_id: event.session_id,
+    cwd: event.cwd ? realpathSync(event.cwd) : undefined,
+    hook_type: event._hook,
+    // prompt_tokens, completion_tokens: need LLMClient to return usage
+  },
+});
+```
+
+**注意**：`LLMClient.process()` 当前返回 `GuardianResult`（等同于 `GuardianAction`），但不携带 token usage。需要修改 `llm.ts` 让 `process()` 同时返回 usage 信息。当前 token usage 在 `llm.ts` 内部只写了 logger（L348-349 OpenAI: `usage_prompt/usage_completion`，L443-444 Anthropic: `usage_input/usage_output`）。
+
+改造 `llm.ts`：让 `GuardianResult` 扩展为包含 usage，或让 `process()` 返回 `{ result, usage }` 元组。
+
+#### 2c. `Sources/CodoCore/GuardianProtocol.swift` — MODIFY
+
+扩展 Swift 侧 `GuardianAction`，新增可选 `meta` 嵌套结构：
 
 ```swift
-public struct GuardianAction: Decodable, Sendable {
-    public let action: String
-    public let title: String?
-    public let body: String?
-    // New fields (all optional for backward compat)
+public struct GuardianActionMeta: Codable, Sendable {
     public let tier: String?
-    public let reason: String?
     public let model: String?
     public let promptTokens: Int?
     public let completionTokens: Int?
     public let latencyMs: Int?
     public let sessionId: String?
     public let cwd: String?
+    public let hookType: String?
 
     private enum CodingKeys: String, CodingKey {
-        case action, title, body, tier, reason, model
+        case tier, model, cwd
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
         case latencyMs = "latency_ms"
         case sessionId = "session_id"
-        case cwd
+        case hookType = "hook_type"
     }
+}
+
+public struct GuardianAction: Codable, Sendable {
+    public let action: String
+    public let notification: CodoMessage?
+    public let reason: String?
+    public let meta: GuardianActionMeta?  // NEW — all optional, backward compat
 }
 ```
 
+#### 2d. `guardian/llm.ts` — MODIFY
+
+修改 `process()` 方法，将 token usage 随结果返回（而不只写到 logger）。具体方式：扩展 `GuardianResult` 或返回包含 usage 的 wrapper。
+
 **涉及文件**：
-- `guardian/main.ts` — MODIFY（~15 lines）
-- `Sources/CodoCore/GuardianAction.swift` — MODIFY（~20 lines added）
+- `guardian/types.ts` — MODIFY（新增 `GuardianActionMeta`，`GuardianAction.meta`）
+- `guardian/main.ts` — MODIFY（填充 meta 字段，~20 lines）
+- `guardian/llm.ts` — MODIFY（返回 token usage，~15 lines）
+- `Sources/CodoCore/GuardianProtocol.swift` — MODIFY（新增 `GuardianActionMeta`，~25 lines）
+- `guardian/main.test.ts` — MODIFY（测试用例适配新 meta 字段）
+- `Tests/CodoCoreTests/GuardianProcessTests.swift` — MODIFY（decode 测试适配）
 
 ---
 
@@ -375,24 +569,28 @@ public struct GuardianAction: Decodable, Sendable {
 
    init(eventStore: EventStore) {
        self.eventStore = eventStore
-       loadProjects()    // 改为从 SQLite 加载
+       loadProjects()    // 仍从 UserDefaults 加载（Phase 6 再迁移）
        loadTodayStats()  // 从 SQLite 加载今日统计
    }
    ```
 
-2. **`ingestHookEvent` 双写**：内存 ring buffer（驱动实时 UI）+ SQLite（持久化）
+2. **`ingestHookEvent` 双写**：
+   - 内存 ring buffer 驱动实时 UI（构建 EventEntry 时填充新的 `projectCwd` 字段）
+   - SQLite 持久化（`eventStore.insertEvent()`）
+   - cwd 在入口处 canonicalize
 
-3. **`ingestGuardianAction` 增强**：写入 `guardian_decisions` 表，更新 daily_stats
+3. **`ingestGuardianAction` 增强**：
+   - 从 `action.meta` 提取决策信息写入 `guardian_decisions` 表
+   - 更新 daily_stats
+   - `notificationsSent`/`notificationsSuppressed` 同时写 SQLite
 
-4. **Projects 迁移**：从 UserDefaults → SQLite。首次启动时检查 UserDefaults 有无旧数据，有则迁移后清除。
-
-5. **统计数据持久化**：`notificationsSent`/`notificationsSuppressed` 从 SQLite 加载，不再重启归零。
+4. **统计数据持久化**：`notificationsSent`/`notificationsSuppressed` 启动时从 SQLite `daily_stats` 加载今日数据，不再重启归零。
 
 #### 3b. `Sources/Codo/AppDelegate.swift` — MODIFY
 
-1. **直接通知也入 DashboardStore**：在 `MessageRouter.notification` 路径中，除了直接发送通知外，也调用 `dashboardStore.ingestDirectNotification()`
+1. **直接通知也入 DashboardStore**：在 `MessageRouter` 的 notification 路径中，除了直接发送通知外，也调用 `dashboardStore.ingestDirectNotification(message:)`。从 `CodoMessage.cwd` 获取项目归属（可为 nil）。
 
-2. **EventStore 生命周期**：在 `applicationDidFinishLaunching` 中创建 `EventStore` 实例，传入 `DashboardStore`
+2. **EventStore 生命周期**：在 `applicationDidFinishLaunching` 中创建 `EventStore` 实例，传入 `DashboardStore`。
 
 **涉及文件**：
 - `Sources/Codo/Dashboard/DashboardStore.swift` — MODIFY（~60 lines changed）
@@ -400,29 +598,90 @@ public struct GuardianAction: Decodable, Sendable {
 
 ---
 
-### Phase 4: guardian.log 轮转
+### Phase 4: guardian.log 轮转（rotate + reopen + LogsView 跟踪）
+
+当前 `GuardianProcess.readStderrLoop` 是 **static 方法**（L311），在进程启动时打开 `logHandle` 并一直持有到 EOF。单纯 rename 文件不够——rename 后旧 handle 仍然写入已移走的 inode，新 guardian.log 文件不会被创建。
+
+同时，`LogsView` 使用 `DispatchSource.makeFileSystemObjectSource(.write)` 监听文件 fd。文件被 rename 后 fd 指向旧 inode，新文件的写入事件不会被触发，tail 视图会断跟。
 
 #### 4a. `Sources/CodoCore/GuardianProcess.swift` — MODIFY
 
-在 `readStderrLoop` 中添加 log 轮转逻辑（与 hooks.log 策略一致）：
+将 `readStderrLoop` 改为支持 rotate + reopen：
 
 ```swift
-private func rotateLogIfNeeded() {
+private static func readStderrLoop(pipe: Pipe) {
     let logPath = "\(NSHomeDirectory())/.codo/guardian.log"
     let maxSize: UInt64 = 5_000_000 // 5MB
-    guard let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
-          let fileSize = attrs[.size] as? UInt64,
-          fileSize > maxSize else { return }
-    let backupPath = "\(logPath).1"
-    try? FileManager.default.removeItem(atPath: backupPath)
-    try? FileManager.default.moveItem(atPath: logPath, toPath: backupPath)
+    let checkInterval = 1000 // every 1000 lines
+
+    var logHandle = openOrCreateLog(at: logPath)
+    var lineCount = 0
+    // ... existing read loop ...
+
+    // Inside the line processing loop:
+    lineCount += 1
+    if lineCount % checkInterval == 0 {
+        if shouldRotate(path: logPath, maxSize: maxSize) {
+            // 1. Close current handle
+            logHandle?.closeFile()
+            // 2. Rotate: rename current → .1
+            let backupPath = "\(logPath).1"
+            try? FileManager.default.removeItem(atPath: backupPath)
+            try? FileManager.default.moveItem(atPath: logPath, toPath: backupPath)
+            // 3. Reopen: create new file + new handle
+            logHandle = openOrCreateLog(at: logPath)
+        }
+    }
+}
+
+private static func openOrCreateLog(at path: String) -> FileHandle? {
+    let fm = FileManager.default
+    if !fm.fileExists(atPath: path) {
+        fm.createFile(atPath: path, contents: nil)
+    }
+    guard let handle = FileHandle(forWritingAtPath: path) else { return nil }
+    handle.seekToEndOfFile()
+    let marker = "--- guardian stderr log started ---\n"
+    handle.write(Data(marker.utf8))
+    return handle
+}
+
+private static func shouldRotate(path: String, maxSize: UInt64) -> Bool {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+          let size = attrs[.size] as? UInt64 else { return false }
+    return size > maxSize
 }
 ```
 
-检查频率：每 1000 行或每 5 分钟检查一次，避免频繁 stat。
+#### 4b. `Sources/Codo/Dashboard/Views/LogsView.swift` — MODIFY
+
+LogsView 的 `DispatchSource` 绑定到文件 fd，文件 rename 后 fd 跟踪旧 inode。需要检测文件 rename 并 reopen：
+
+```swift
+// 在 startMonitoring() 中，监听 .rename 事件而不只是 .write
+let source = DispatchSource.makeFileSystemObjectSource(
+    fileDescriptor: fileDescriptor,
+    eventMask: [.write, .rename, .delete],  // 扩展监听事件
+    queue: .main
+)
+source.setEventHandler { [self] in
+    let event = source.data
+    if event.contains(.rename) || event.contains(.delete) {
+        // 文件被 rename/delete（rotation 发生），重新建立监听
+        stopMonitoring()
+        // 短暂延迟等待新文件创建
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            startMonitoring()
+        }
+    } else {
+        loadLogFile()
+    }
+}
+```
 
 **涉及文件**：
-- `Sources/CodoCore/GuardianProcess.swift` — MODIFY（~20 lines added）
+- `Sources/CodoCore/GuardianProcess.swift` — MODIFY（~40 lines changed）
+- `Sources/Codo/Dashboard/Views/LogsView.swift` — MODIFY（~15 lines changed）
 
 ---
 
@@ -430,19 +689,44 @@ private func rotateLogIfNeeded() {
 
 #### 5a. Project Filter — 分项目查看
 
+**前置条件**：Phase 0 已完成 EventEntry 添加 `projectCwd` 字段。
+
+`DashboardStore` 新增 `selectedProjectCwd: String?`（canonical cwd，nil = show all）。
+
+**`Sources/Codo/Dashboard/Views/SidebarView.swift`** — MODIFY
+
+Sidebar 中项目行点击时设置 `store.selectedProjectCwd`：
+
+```swift
+// 当前 (SidebarView.swift L38-40)
+ProjectRow(project: project)
+    .onTapGesture { selectedProject = project }
+
+// 改造后
+ProjectRow(project: project,
+           isSelected: store.selectedProjectCwd == project.id)
+    .onTapGesture {
+        // Toggle filter: tap again to deselect
+        store.selectedProjectCwd =
+            (store.selectedProjectCwd == project.id) ? nil : project.id
+    }
+```
+
 **`Sources/Codo/Dashboard/Views/DashboardView.swift`** — MODIFY
 
-添加项目过滤器。Sidebar 点击项目时，设置 `DashboardStore.selectedProject`，所有面板根据 filter 展示数据。
+所有面板使用 filtered 数据：
 
 ```swift
 // DashboardStore
-var selectedProject: String? = nil  // nil = show all
+var selectedProjectCwd: String? = nil
 
 var filteredEvents: [EventEntry] {
-    guard let project = selectedProject else { return events }
-    return events.filter { $0.projectCwd == project }
+    guard let cwd = selectedProjectCwd else { return events }
+    return events.filter { $0.projectCwd == cwd }
 }
 ```
+
+`LiveEventStream`、`ActiveSessionsList`、`StatsCard` 都改为读 `filteredEvents` / filtered sessions。
 
 #### 5b. History View — 历史事件浏览
 
@@ -453,7 +737,7 @@ var filteredEvents: [EventEntry] {
 | 功能 | 实现 |
 |------|------|
 | 日期范围选择 | `DatePicker` start/end |
-| 项目过滤 | Picker（All / 各项目） |
+| 项目过滤 | Picker（All / 各项目，使用 canonical cwd 匹配） |
 | 事件类型过滤 | Multi-select toggle（hook / notification / guardian_action） |
 | 分页加载 | 每页 50 条，滚动触发加载更多 |
 | 决策详情 | 点击 guardian_action 行展开：tier、reason、token 用量 |
@@ -484,11 +768,12 @@ var filteredEvents: [EventEntry] {
 
 **涉及文件**：
 - `Sources/Codo/Dashboard/Models/NavigationItem.swift` — MODIFY（新增 `.history`）
+- `Sources/Codo/Dashboard/Views/DetailContainerView.swift` — MODIFY（新增 History case + 键盘快捷键调整）
+- `Sources/Codo/Dashboard/Views/SidebarView.swift` — MODIFY（项目过滤交互）
 - `Sources/Codo/Dashboard/Views/DashboardView.swift` — MODIFY
 - `Sources/Codo/Dashboard/Views/HistoryView.swift` — NEW
 - `Sources/Codo/Dashboard/Views/StatsCard.swift` — MODIFY
 - `Sources/Codo/Dashboard/Views/LogsView.swift` — MODIFY
-- `Sources/Codo/Dashboard/Views/DetailContainerView.swift` — MODIFY
 
 ---
 
@@ -503,8 +788,9 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 #### 6b. Migration Path
 
 首次启动检测：
-1. 如果 `UserDefaults["CodoDashboardProjects"]` 存在 → 迁移到 SQLite `projects` 表 → 清除 UserDefaults key
-2. 如果 `~/.codo/codo.db` 不存在 → CREATE TABLE all
+1. 如果 `~/.codo/codo.db` 不存在 → CREATE TABLE all
+2. 如果 `UserDefaults["CodoDashboardProjects"]` 存在 → 迁移到 SQLite `projects` 表（cwd 做 canonicalize）→ 校验行数一致后清除 UserDefaults key
+3. 迁移前备份 UserDefaults 数据（写入 `~/.codo/projects-backup.json`），迁移失败可回滚
 
 #### 6c. guardian.log 结构化双写（可选，Phase 6+）
 
@@ -523,17 +809,18 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 
 | # | Scope | Description |
 |---|-------|-------------|
-| 1 | Phase 1a-c | `feat(core): add EventStore SQLite persistence layer` |
-| 2 | Phase 2a | `feat(guardian): enrich stdout GuardianAction with decision metadata` |
-| 3 | Phase 2b | `feat(core): extend GuardianAction struct with new fields` |
-| 4 | Phase 3a | `refactor(dashboard): persist events and stats to SQLite` |
-| 5 | Phase 3b | `feat(app): route direct notifications through DashboardStore` |
-| 6 | Phase 4a | `feat(core): add guardian.log rotation (5MB max + .1 backup)` |
-| 7 | Phase 5a | `feat(dashboard): add project filter across all panels` |
-| 8 | Phase 5b | `feat(dashboard): add History view with query and pagination` |
-| 9 | Phase 5c | `feat(dashboard): enhance StatsCard with daily/weekly/monthly stats` |
-| 10 | Phase 5d | `feat(dashboard): add structured log view in LogsView` |
-| 11 | Phase 6a-b | `chore(core): add auto-vacuum and UserDefaults migration` |
+| 1 | Phase 0a-f | `feat(core): add projectCwd to EventEntry and cwd to CodoMessage, unify canonicalization` |
+| 2 | Phase 1a-c | `feat(core): add EventStore SQLite persistence layer` |
+| 3 | Phase 2a-b | `feat(guardian): enrich GuardianAction with decision meta (TS side)` |
+| 4 | Phase 2c-d | `feat(core): extend GuardianAction with meta struct (Swift side)` |
+| 5 | Phase 3a | `refactor(dashboard): persist events and stats to SQLite` |
+| 6 | Phase 3b | `feat(app): route direct notifications through DashboardStore` |
+| 7 | Phase 4a-b | `feat(core): add guardian.log rotation with reopen + LogsView re-tracking` |
+| 8 | Phase 5a | `feat(dashboard): add project filter across all panels` |
+| 9 | Phase 5b | `feat(dashboard): add History view with query and pagination` |
+| 10 | Phase 5c | `feat(dashboard): enhance StatsCard with daily/weekly/monthly stats` |
+| 11 | Phase 5d | `feat(dashboard): add structured log view in LogsView` |
+| 12 | Phase 6a-b | `chore(core): add auto-vacuum and UserDefaults migration` |
 
 ---
 
@@ -541,36 +828,51 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 
 | Layer | Content | Trigger |
 |-------|---------|---------|
-| **L1 — UT** | EventStore CRUD, vacuum, migration, GuardianAction decode | `swift test` |
-| **L2 — Lint** | SwiftLint + `bun test` (guardian) | pre-commit |
-| **L3 — Integration** | 端到端：hook event → SQLite → Dashboard query → 正确展示 | manual |
-| **L4 — Regression** | 现有 Dashboard 功能不退化（实时事件流、session 跟踪、settings） | manual |
+| **L1 — UT** | EventStore CRUD, vacuum, migration; GuardianAction decode (Swift + TS); canonicalizeCwd; CodoMessage decode with/without cwd | `swift test` + `bun test` |
+| **L2 — Lint** | SwiftLint + Biome | pre-commit |
+| **L3 — Integration** | 端到端：hook event → SQLite → Dashboard query → 正确展示; log rotation → reopen → LogsView 跟踪新文件 | manual |
+| **L4 — Regression** | 现有 Dashboard 功能不退化（实时事件流、session 跟踪、settings、notification banner） | manual |
 
 ---
 
 ## File Inventory
 
-### New Files (4)
+### New Files (5)
 
-| # | File | ~Lines |
-|---|------|--------|
-| 1 | `Sources/CodoCore/EventStore.swift` | ~300 |
-| 2 | `Sources/CodoCore/EventStoreRecords.swift` | ~80 |
-| 3 | `Tests/CodoCoreTests/EventStoreTests.swift` | ~150 |
-| 4 | `Sources/Codo/Dashboard/Views/HistoryView.swift` | ~200 |
+| # | File | ~Lines | Purpose |
+|---|------|--------|---------|
+| 1 | `Sources/CodoCore/EventStore.swift` | ~300 | SQLite persistence layer |
+| 2 | `Sources/CodoCore/EventStoreRecords.swift` | ~80 | Record types for DB |
+| 3 | `Sources/CodoCore/PathUtils.swift` | ~10 | `canonicalizeCwd()` |
+| 4 | `Tests/CodoCoreTests/EventStoreTests.swift` | ~150 | EventStore unit tests |
+| 5 | `Sources/Codo/Dashboard/Views/HistoryView.swift` | ~200 | History query view |
 
-### Modified Files (8)
+### Modified Files (16)
 
 | File | Changes |
 |------|---------|
-| `guardian/main.ts` | Enrich stdout JSON with decision metadata (~15 lines) |
-| `Sources/CodoCore/GuardianAction.swift` | Add optional fields + CodingKeys (~20 lines) |
-| `Sources/CodoCore/GuardianProcess.swift` | Add log rotation (~20 lines) |
-| `Sources/Codo/Dashboard/DashboardStore.swift` | SQLite integration, project migration (~60 lines) |
+| `Sources/Codo/Dashboard/Models/EventEntry.swift` | Add `projectCwd: String?` (~3 lines) |
+| `Sources/CodoCore/CodoMessage.swift` | Add `cwd: String?` (~3 lines) |
+| `Sources/CodoCore/GuardianProtocol.swift` | Add `GuardianActionMeta` struct + `meta` field (~25 lines) |
+| `Sources/CodoCore/GuardianProcess.swift` | Log rotation: rotate + reopen logic (~40 lines) |
+| `Sources/Codo/Dashboard/DashboardStore.swift` | SQLite integration, canonicalize cwd, project filter state (~60 lines) |
 | `Sources/Codo/AppDelegate.swift` | EventStore init, direct notification routing (~15 lines) |
+| `guardian/types.ts` | Add `GuardianActionMeta`, `NotificationPayload.cwd`, update `GuardianAction` (~15 lines) |
+| `guardian/main.ts` | Populate meta in emitAction calls (~20 lines) |
+| `guardian/llm.ts` | Return token usage from `process()` (~15 lines) |
+| `guardian/main.test.ts` | Adapt tests for new meta field (~10 lines) |
+| `cli/codo.ts` | Add `cwd: process.cwd()` to CodoMessage (~3 lines) |
+| `Sources/Codo/Dashboard/Views/SidebarView.swift` | Project filter tap interaction (~10 lines) |
+| `Sources/Codo/Dashboard/Views/DetailContainerView.swift` | Add History case + adjust keyboard shortcuts (~10 lines) |
 | `Sources/Codo/Dashboard/Views/StatsCard.swift` | Multi-period stats, token usage (~30 lines) |
-| `Sources/Codo/Dashboard/Views/LogsView.swift` | Structured log tab (~80 lines) |
-| `Sources/Codo/Dashboard/Models/NavigationItem.swift` | Add `.history` case (~3 lines) |
+| `Sources/Codo/Dashboard/Views/LogsView.swift` | Structured tab + rename/delete event handling (~80 lines) |
+| `Sources/Codo/Dashboard/Models/NavigationItem.swift` | Add `.history` case (~5 lines) |
+
+### Unchanged Test Files (need adaptation)
+
+| File | Reason |
+|------|--------|
+| `Tests/CodoCoreTests/GuardianProcessTests.swift` | GuardianAction decode tests need meta field coverage |
 
 ---
 
@@ -579,7 +881,11 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 | Risk | Mitigation |
 |------|------------|
 | SQLite 写入阻塞主线程 | `EventStore` 内部用串行 `DispatchQueue`，所有 DB 操作异步 |
-| Guardian stdout 格式变更导致旧版 Swift 解析失败 | 新字段全部 `Optional`，向后兼容 |
+| Guardian stdout 格式变更导致旧版 Swift 解析失败 | `meta` 是 `Optional`，旧版不带 meta 的 JSON 仍可正常 decode |
 | DB 文件损坏 | WAL 模式 + 应用启动时 `PRAGMA integrity_check` |
 | 数据量增长 | 30 天自动 vacuum + daily_stats 聚合历史 |
-| Migration 失败 | 迁移前备份 UserDefaults 数据，迁移后校验行数一致才清除旧数据 |
+| Migration 失败 | 迁移前备份到 `~/.codo/projects-backup.json`，校验一致后才清除旧数据 |
+| Log rotation 后 LogsView 断跟 | `DispatchSource` 监听 `.rename + .delete`，触发 reopen |
+| Log rotation 后 guardian stderr 写入旧 inode | `readStderrLoop` 中 rotate 后立即 `closeFile()` + 创建新 handle |
+| 同一项目产生多个 cwd key | 全链路 canonicalize（TS: `realpathSync`, Swift: `canonicalizeCwd`, SQLite: INSERT 前统一处理） |
+| 直接通知无 cwd 无法归属项目 | `CodoMessage.cwd` 可选，CLI 端追加 `process.cwd()`，无 cwd 的旧消息 `project_cwd = NULL` |
