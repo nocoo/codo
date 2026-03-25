@@ -12,7 +12,7 @@ export interface ProjectState {
   task: string | null;
   lastStatus: string | null;
   model: string | null;
-  recentNotifications: Array<{ title: string; time: number }>;
+  recentNotifications: Array<{ title: string; body?: string; time: number }>;
   lastEventTime: number;
   sessionActive: boolean;
   transcriptLastReadOffset: number;
@@ -30,10 +30,11 @@ export interface BufferedEvent {
 export interface StateStore {
   projects: Map<string, ProjectState>;
   events: BufferedEvent[];
+  sessionToCwd: Map<string, string>; // session_id → canonical cwd
   summary: string;
 }
 
-const MAX_EVENTS = 50;
+const MAX_EVENTS = 200;
 const GENERIC_TASK_PATTERNS = [
   /^done$/i,
   /^completed$/i,
@@ -45,6 +46,7 @@ export function createStateStore(): StateStore {
   return {
     projects: new Map(),
     events: [],
+    sessionToCwd: new Map(),
     summary: "",
   };
 }
@@ -92,13 +94,13 @@ function isGenericTask(message: unknown): boolean {
 function summarizeEvent(event: HookEvent): string {
   switch (event._hook) {
     case "stop":
-      return `stop: ${truncate(event.last_assistant_message, 80)}`;
+      return `stop: ${truncate(event.last_assistant_message, 500)}`;
     case "notification":
-      return `notification: ${event.title ?? "untitled"}`;
+      return `notification: ${event.title ?? "untitled"} — ${truncate(event.message, 200)}`;
     case "post-tool-use":
-      return `tool: ${event.tool_name ?? "unknown"} — ${truncate(extractCommand(event), 60)}`;
+      return `tool: ${event.tool_name ?? "unknown"} — ${truncate(extractCommand(event), 200)} → ${truncate(event.tool_response, 300)}`;
     case "post-tool-use-failure":
-      return `tool-fail: ${event.tool_name ?? "unknown"} — ${truncate(event.error ?? "", 60)}`;
+      return `tool-fail: ${event.tool_name ?? "unknown"} — ${truncate(event.error ?? "", 300)}`;
     case "session-start":
       return `session-start: ${event.model ?? "unknown model"}`;
     case "session-end":
@@ -123,12 +125,17 @@ export function updateState(store: StateStore, event: HookEvent): void {
     return;
   }
 
+  // Resolve cwd: canonicalize if present, otherwise fall back to sessionToCwd
+  const resolvedCwd =
+    (cwd ? canonicalizePath(cwd) : undefined) ??
+    store.sessionToCwd.get(event.session_id);
+
   // Buffer the event (contextual and important)
   const buffered: BufferedEvent = {
     timestamp: Date.now(),
     hookType: event._hook,
     sessionId: event.session_id,
-    cwd: cwd,
+    cwd: resolvedCwd,
     summary: summarizeEvent(event),
     raw: event as Record<string, unknown>,
   };
@@ -151,6 +158,9 @@ export function updateState(store: StateStore, event: HookEvent): void {
 
   switch (event._hook) {
     case "session-start":
+      if (cwd) {
+        store.sessionToCwd.set(event.session_id, canonicalizePath(cwd));
+      }
       project.sessionId = event.session_id;
       project.model = typeof event.model === "string" ? event.model : null;
       project.sessionActive = true;
@@ -176,6 +186,10 @@ export function updateState(store: StateStore, event: HookEvent): void {
     case "notification":
       project.recentNotifications.push({
         title: typeof event.title === "string" ? event.title : "Untitled",
+        body:
+          typeof event.message === "string"
+            ? truncate(event.message, 200)
+            : undefined,
         time: Date.now(),
       });
       // Keep last 10 notifications
@@ -215,6 +229,18 @@ export function evictStaleProjects(
   for (const [key, project] of store.projects) {
     if (now - project.lastEventTime > maxAgeMs) {
       store.projects.delete(key);
+    }
+  }
+
+  // Prune sessionToCwd: keep sessions still in the event buffer
+  // OR still attached to a surviving project (active session with no recent events)
+  const liveSessionIds = new Set(store.events.map((e) => e.sessionId));
+  for (const [, project] of store.projects) {
+    if (project.sessionId) liveSessionIds.add(project.sessionId);
+  }
+  for (const sessionId of store.sessionToCwd.keys()) {
+    if (!liveSessionIds.has(sessionId)) {
+      store.sessionToCwd.delete(sessionId);
     }
   }
 }

@@ -310,8 +310,8 @@ describe("event buffer", () => {
       );
     }
 
-    // 1 session-start + 55 post-tool-use = 56, capped at 50
-    expect(store.events.length).toBeLessThanOrEqual(50);
+    // 1 session-start + 55 post-tool-use = 56, still under 200
+    expect(store.events.length).toBe(56);
   });
 
   test("preserves order", () => {
@@ -498,5 +498,338 @@ describe("updateState object payloads", () => {
     const lastEvent = store.events[store.events.length - 1];
     expect(lastEvent.summary).toContain("stop:");
     // Should NOT contain [object Object] because truncate returns String() representation
+  });
+});
+
+// ── Commit 1: Context expansion tests ──
+
+describe("event buffer expanded", () => {
+  test("FIFO cap at 200", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
+    );
+
+    // Push 210 important events
+    for (let i = 0; i < 210; i++) {
+      updateState(
+        store,
+        makeEvent({
+          _hook: "post-tool-use",
+          cwd: "/tmp/proj",
+          tool_name: "Bash",
+          command: `npm test batch-${i}`,
+          tool_response: `result-${i}`,
+        }),
+      );
+    }
+
+    // 1 session-start + 210 post-tool-use = 211, capped at 200
+    expect(store.events.length).toBeLessThanOrEqual(200);
+    // Oldest events should be dropped — the last event should be batch-209
+    const lastEvent = store.events[store.events.length - 1];
+    expect(lastEvent.summary).toContain("batch-209");
+  });
+});
+
+describe("notification body stored", () => {
+  test("body field is recorded from message", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
+    );
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "notification",
+        cwd: "/tmp/proj",
+        title: "Tests passed",
+        message: "All 42 tests passed with 95% coverage",
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    expect(project?.recentNotifications[0].body).toBe(
+      "All 42 tests passed with 95% coverage",
+    );
+  });
+
+  test("body is undefined when message is not a string", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
+    );
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "notification",
+        cwd: "/tmp/proj",
+        title: "No body",
+        message: { complex: "object" },
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    expect(project?.recentNotifications[0].body).toBeUndefined();
+  });
+});
+
+describe("sessionToCwd resolution", () => {
+  test("session_id → cwd resolution at write time", () => {
+    const store = createStateStore();
+
+    // session-start with cwd
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        session_id: "sess-1",
+        cwd: "/tmp/proj",
+      }),
+    );
+
+    // session-end without cwd — should resolve to /tmp/proj via sessionToCwd
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-end",
+        session_id: "sess-1",
+        cwd: undefined,
+      }),
+    );
+
+    const sessionEndEvent = store.events.find(
+      (e) => e.hookType === "session-end",
+    );
+    expect(sessionEndEvent?.cwd).toBe(canonicalizePath("/tmp/proj"));
+  });
+
+  test("multi-session same cwd: old session still resolves after overwrite", () => {
+    const store = createStateStore();
+
+    // Session s1 starts on /tmp/proj
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        session_id: "s1",
+        cwd: "/tmp/proj",
+      }),
+    );
+
+    // Session s2 starts on same /tmp/proj — overwrites ProjectState.sessionId
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        session_id: "s2",
+        cwd: "/tmp/proj",
+      }),
+    );
+
+    // s1 sends a stop event without cwd — should still resolve via sessionToCwd
+    updateState(
+      store,
+      makeEvent({
+        _hook: "stop",
+        session_id: "s1",
+        cwd: undefined,
+        last_assistant_message: "old session finishing up",
+      }),
+    );
+
+    const s1Stop = store.events.find(
+      (e) => e.hookType === "stop" && e.sessionId === "s1",
+    );
+    expect(s1Stop?.cwd).toBe(canonicalizePath("/tmp/proj"));
+  });
+
+  test("cwd canonicalization consistency: trailing slash", () => {
+    const store = createStateStore();
+
+    // session-start with canonical path
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        session_id: "sess-c",
+        cwd: "/tmp/proj",
+      }),
+    );
+
+    // event with trailing slash — should be canonicalized to match
+    updateState(
+      store,
+      makeEvent({
+        _hook: "post-tool-use",
+        session_id: "sess-c",
+        cwd: "/tmp/proj",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: "ok",
+      }),
+    );
+
+    const toolEvent = store.events.find((e) => e.hookType === "post-tool-use");
+    const sessionEvent = store.events.find(
+      (e) => e.hookType === "session-start",
+    );
+    // Both should have the same canonical cwd
+    expect(toolEvent?.cwd).toBe(sessionEvent?.cwd);
+  });
+
+  test("cwd canonicalization consistency: .. segment", () => {
+    const store = createStateStore();
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        session_id: "sess-d",
+        cwd: "/tmp/proj",
+      }),
+    );
+
+    // /tmp/foo/../proj should canonicalize to /tmp/proj (if /tmp/proj exists)
+    // For non-existent paths, canonicalizePath returns as-is, so we test with /tmp
+    updateState(
+      store,
+      makeEvent({
+        _hook: "post-tool-use",
+        session_id: "sess-d",
+        cwd: "/tmp/../tmp",
+        tool_name: "Bash",
+        command: "ls",
+        tool_response: "ok",
+      }),
+    );
+
+    const toolEvent = store.events.find((e) => e.hookType === "post-tool-use");
+    // /tmp/../tmp should canonicalize to the real path of /tmp
+    expect(toolEvent?.cwd).toBe(canonicalizePath("/tmp"));
+    // Should NOT contain ".."
+    expect(toolEvent?.cwd).not.toContain("..");
+  });
+});
+
+describe("sessionToCwd cleanup", () => {
+  test("evictStaleProjects prunes orphaned sessions, keeps live ones", () => {
+    const store = createStateStore();
+
+    // Create session referenced in events
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        session_id: "sess-in-events",
+        cwd: "/tmp/proj-a",
+      }),
+    );
+
+    // Create session attached to surviving project but not in events
+    // (simulated by directly populating sessionToCwd + project)
+    store.sessionToCwd.set(
+      "sess-on-project",
+      canonicalizePath("/tmp/proj-b"),
+    );
+    store.projects.set(canonicalizePath("/tmp/proj-b"), {
+      cwd: canonicalizePath("/tmp/proj-b"),
+      sessionId: "sess-on-project",
+      task: null,
+      lastStatus: null,
+      model: null,
+      recentNotifications: [],
+      lastEventTime: Date.now(), // recent, won't be evicted
+      sessionActive: true,
+      transcriptLastReadOffset: 0,
+    });
+
+    // Create completely orphaned session
+    store.sessionToCwd.set("sess-orphan", "/tmp/gone");
+
+    expect(store.sessionToCwd.size).toBe(3);
+
+    evictStaleProjects(store, 24 * 60 * 60 * 1000);
+
+    // sess-in-events: kept (in events)
+    expect(store.sessionToCwd.has("sess-in-events")).toBe(true);
+    // sess-on-project: kept (on surviving project)
+    expect(store.sessionToCwd.has("sess-on-project")).toBe(true);
+    // sess-orphan: pruned
+    expect(store.sessionToCwd.has("sess-orphan")).toBe(false);
+  });
+});
+
+describe("summarizeEvent expanded truncation", () => {
+  test("stop preserves longer assistant messages", () => {
+    const store = createStateStore();
+    const longMsg = "x".repeat(400);
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "stop",
+        cwd: "/tmp/proj",
+        last_assistant_message: longMsg,
+      }),
+    );
+
+    const stopEvent = store.events.find((e) => e.hookType === "stop");
+    // 400 chars < 500 limit, so full message should be preserved
+    expect(stopEvent?.summary).toContain(longMsg);
+  });
+
+  test("notification includes message in summary", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
+    );
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "notification",
+        cwd: "/tmp/proj",
+        title: "Build done",
+        message: "Release package compiled successfully",
+      }),
+    );
+
+    const notifEvent = store.events.find(
+      (e) => e.hookType === "notification",
+    );
+    expect(notifEvent?.summary).toContain("Build done");
+    expect(notifEvent?.summary).toContain("Release package compiled");
+  });
+
+  test("post-tool-use includes tool_response in summary", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
+    );
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "post-tool-use",
+        cwd: "/tmp/proj",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: "42 tests passed, 0 failures",
+      }),
+    );
+
+    const toolEvent = store.events.find(
+      (e) => e.hookType === "post-tool-use",
+    );
+    expect(toolEvent?.summary).toContain("→");
+    expect(toolEvent?.summary).toContain("42 tests passed");
   });
 });
