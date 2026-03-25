@@ -154,9 +154,11 @@ CREATE TABLE guardian_decisions (
 CREATE INDEX idx_decisions_project ON guardian_decisions(project_cwd, timestamp);
 
 -- 每日统计快照（按项目聚合，用于 Dashboard StatsCard 快速加载）
+-- project_cwd 允许 NULL：无归属项目的直接通知使用哨兵值 '__unattributed__' 聚合
+-- 这样 StatsCard "All" 视图 SUM 全表即可得到完整数据，不会遗漏
 CREATE TABLE daily_stats (
     date            TEXT    NOT NULL,  -- YYYY-MM-DD
-    project_cwd     TEXT    NOT NULL,
+    project_cwd     TEXT    NOT NULL,  -- canonical cwd 或 '__unattributed__'
     events_count    INTEGER NOT NULL DEFAULT 0,
     sent_count      INTEGER NOT NULL DEFAULT 0,
     suppressed_count INTEGER NOT NULL DEFAULT 0,
@@ -191,7 +193,12 @@ CREATE TABLE projects (
 - `Sources/CodoCore/CodoMessage.swift` — 新增 `public let cwd: String?`
 - `cli/codo.ts` — 在普通模式下追加 `cwd: process.cwd()` 到 JSON
 - `guardian/types.ts` — `NotificationPayload` 新增可选 `cwd?: string`
-- 对于仍然不带 cwd 的直接通知（旧版 CLI），`project_cwd` 在 SQLite 中存为 NULL
+- 对于仍然不带 cwd 的直接通知（旧版 CLI），`project_cwd` 在 SQLite `events` 表中存为 NULL
+
+**daily_stats 的 NULL 项目处理**：`events` 表允许 `project_cwd = NULL`，但 `daily_stats` 要求 `project_cwd NOT NULL`（作为主键）。策略：无归属项目的事件在写入 `daily_stats` 时使用哨兵值 `'__unattributed__'`。这样：
+- `StatsCard` "All" 视图：`SUM` 全表，包含 `__unattributed__` 行，数据完整不漏
+- `StatsCard` 按项目过滤：`WHERE project_cwd = ?`，`__unattributed__` 行不干扰具体项目
+- `StatsCard` 可选展示"未归属"项目的独立计数
 
 ### 改造后的数据流
 
@@ -244,15 +251,17 @@ CREATE TABLE projects (
 |----|---------|------|
 | Guardian TS (`state.ts`) | `realpathSync(cwd)` ✅ 已有 | 不变 |
 | Guardian TS → stdout | 原始 cwd 透传 | `emitAction` 前对 cwd 调用 `realpathSync` |
-| Swift `DashboardStore` | 原始 cwd 直接用 | 新增 `canonicalizeCwd(_:)` 调用 `realpath(3)` C 函数 |
+| Swift `DashboardStore` | 原始 cwd 直接用 | 新增 `canonicalizeCwd(_:)` 用 `NSString.resolvingSymlinksInPath`（解析 symlink + 去除 `/private` 前缀） |
 | Swift `EventStore` | 不存在 | 所有 INSERT 前统一 canonicalize |
-| CLI `codo.ts` | 不涉及（cwd 来自 hook payload 或 `process.cwd()`） | `process.cwd()` 在 POSIX 上已经是 realpath |
+| CLI `codo.ts` | 不涉及（cwd 来自 hook payload 或 `process.cwd()`） | 显式 `realpathSync(process.cwd())`，失败时 fallback 原值。`process.cwd()` 不保证 canonical（如通过 symlink 进入的目录） |
 
 ```swift
 // Sources/CodoCore/PathUtils.swift — NEW (~10 lines)
 import Foundation
 
-/// Resolve symlinks and relative components. Falls back to input on failure.
+/// Resolve symlinks and normalize path components (including /private prefix on macOS).
+/// Uses NSString.resolvingSymlinksInPath which handles both symlinks and /private normalization.
+/// Falls back to original input on empty result.
 public func canonicalizeCwd(_ path: String) -> String {
     let resolved = (path as NSString).resolvingSymlinksInPath
     return resolved.isEmpty ? path : resolved
@@ -309,7 +318,24 @@ cwd 规范化工具函数（见上文 Architecture 部分）。
 
 #### 0e. `cli/codo.ts` — MODIFY
 
-普通模式（非 `--hook`）发送 CodoMessage 时追加 `cwd: process.cwd()`。
+普通模式（非 `--hook`）发送 CodoMessage 时追加 canonicalized cwd：
+
+```typescript
+import { realpathSync } from "node:fs";
+
+function getCwd(): string {
+  try {
+    return realpathSync(process.cwd());
+  } catch {
+    return process.cwd(); // fallback to raw value
+  }
+}
+
+// In CodoMessage construction:
+{ title: "...", cwd: getCwd() }
+```
+
+`process.cwd()` 不保证 canonical（如通过 symlink cd 进入的目录），必须显式 `realpathSync` 与 TS 侧 `guardian/state.ts` 的 `canonicalizePath` 行为一致。
 
 #### 0f. `guardian/types.ts` — MODIFY
 
@@ -477,38 +503,52 @@ export interface GuardianAction {
 
 #### 2b. `guardian/main.ts` — MODIFY
 
-在 `processHookEvent` 中，LLM 调用完成后填充 `meta`：
+**所有 `emitAction` 调用路径统一走 meta builder**。当前 `processHookEvent` 有三条 `emitAction` 路径（main.ts L136, L144, L83-93），每条都需要补齐基础 meta：
 
 ```typescript
-// 当前代码 (main.ts L122-136)
-const t0 = performance.now();
-const result = await llmClient.process(event, state);
-const elapsed = Math.round(performance.now() - t0);
-// ... existing logging ...
-emitAction(result);
-
-// 改造后
-const t0 = performance.now();
-const result = await llmClient.process(event, state);
-const elapsed = Math.round(performance.now() - t0);
-// ... existing logging ...
-emitAction({
-  ...result,
-  meta: {
+// 新增 helper：构建基础 meta（所有路径共享）
+function buildBaseMeta(event: HookEvent, tier: string): GuardianActionMeta {
+  return {
     tier,
-    model: /* from config, need to thread through */,
-    latency_ms: elapsed,
     session_id: event.session_id,
     cwd: event.cwd ? realpathSync(event.cwd) : undefined,
     hook_type: event._hook,
-    // prompt_tokens, completion_tokens: need LLMClient to return usage
+  };
+}
+
+// 路径 1: LLM 分支 (main.ts L120-136) — 最丰富的 meta
+const result = await llmClient.process(event, state);
+const elapsed = Math.round(performance.now() - t0);
+emitAction({
+  ...result,
+  meta: {
+    ...buildBaseMeta(event, tier),
+    model: /* from config */,
+    latency_ms: elapsed,
+    prompt_tokens: result.usage?.promptTokens,
+    completion_tokens: result.usage?.completionTokens,
   },
+});
+
+// 路径 2: fallback notification (main.ts L139-145) — 基础 meta + 无 LLM 字段
+const notification = fallbackNotification(event);
+if (notification) {
+  emitAction({
+    action: "send",
+    notification,
+    meta: buildBaseMeta(event, tier),
+  });
+}
+
+// 路径 3: direct CodoMessage (main.ts L80-96) — 非 hook 事件，meta 有限
+emitAction({
+  action: "send",
+  notification: { title: parsed.title, ... },
+  meta: { cwd: parsed.cwd ? realpathSync(parsed.cwd) : undefined },
 });
 ```
 
-**注意**：`LLMClient.process()` 当前返回 `GuardianResult`（等同于 `GuardianAction`），但不携带 token usage。需要修改 `llm.ts` 让 `process()` 同时返回 usage 信息。当前 token usage 在 `llm.ts` 内部只写了 logger（L348-349 OpenAI: `usage_prompt/usage_completion`，L443-444 Anthropic: `usage_input/usage_output`）。
-
-改造 `llm.ts`：让 `GuardianResult` 扩展为包含 usage，或让 `process()` 返回 `{ result, usage }` 元组。
+这样确保 **所有** emitAction 输出都携带 `meta.cwd` 和 `meta.session_id`（在可用时），Swift 侧不会出现部分事件丢项目归属或上下文的情况。
 
 #### 2c. `Sources/CodoCore/GuardianProtocol.swift` — MODIFY
 
@@ -847,7 +887,7 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 | 4 | `Tests/CodoCoreTests/EventStoreTests.swift` | ~150 | EventStore unit tests |
 | 5 | `Sources/Codo/Dashboard/Views/HistoryView.swift` | ~200 | History query view |
 
-### Modified Files (16)
+### Modified Files (17)
 
 | File | Changes |
 |------|---------|
@@ -858,21 +898,16 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 | `Sources/Codo/Dashboard/DashboardStore.swift` | SQLite integration, canonicalize cwd, project filter state (~60 lines) |
 | `Sources/Codo/AppDelegate.swift` | EventStore init, direct notification routing (~15 lines) |
 | `guardian/types.ts` | Add `GuardianActionMeta`, `NotificationPayload.cwd`, update `GuardianAction` (~15 lines) |
-| `guardian/main.ts` | Populate meta in emitAction calls (~20 lines) |
+| `guardian/main.ts` | Unified meta builder for all emitAction paths (~30 lines) |
 | `guardian/llm.ts` | Return token usage from `process()` (~15 lines) |
 | `guardian/main.test.ts` | Adapt tests for new meta field (~10 lines) |
-| `cli/codo.ts` | Add `cwd: process.cwd()` to CodoMessage (~3 lines) |
+| `cli/codo.ts` | Add `cwd: realpathSync(process.cwd())` to CodoMessage (~8 lines) |
 | `Sources/Codo/Dashboard/Views/SidebarView.swift` | Project filter tap interaction (~10 lines) |
 | `Sources/Codo/Dashboard/Views/DetailContainerView.swift` | Add History case + adjust keyboard shortcuts (~10 lines) |
 | `Sources/Codo/Dashboard/Views/StatsCard.swift` | Multi-period stats, token usage (~30 lines) |
 | `Sources/Codo/Dashboard/Views/LogsView.swift` | Structured tab + rename/delete event handling (~80 lines) |
 | `Sources/Codo/Dashboard/Models/NavigationItem.swift` | Add `.history` case (~5 lines) |
-
-### Unchanged Test Files (need adaptation)
-
-| File | Reason |
-|------|--------|
-| `Tests/CodoCoreTests/GuardianProcessTests.swift` | GuardianAction decode tests need meta field coverage |
+| `Tests/CodoCoreTests/GuardianProcessTests.swift` | GuardianAction decode tests: add meta field coverage (~10 lines) |
 
 ---
 
@@ -888,4 +923,5 @@ App 启动时：`eventStore.vacuum(keepDays: 30)`
 | Log rotation 后 LogsView 断跟 | `DispatchSource` 监听 `.rename + .delete`，触发 reopen |
 | Log rotation 后 guardian stderr 写入旧 inode | `readStderrLoop` 中 rotate 后立即 `closeFile()` + 创建新 handle |
 | 同一项目产生多个 cwd key | 全链路 canonicalize（TS: `realpathSync`, Swift: `canonicalizeCwd`, SQLite: INSERT 前统一处理） |
-| 直接通知无 cwd 无法归属项目 | `CodoMessage.cwd` 可选，CLI 端追加 `process.cwd()`，无 cwd 的旧消息 `project_cwd = NULL` |
+| 直接通知无 cwd 无法归属项目 | `CodoMessage.cwd` 可选，CLI 端 `realpathSync(process.cwd())` 显式 canonicalize，无 cwd 的旧消息 `project_cwd = NULL`（events 表），daily_stats 用 `'__unattributed__'` 哨兵值聚合 |
+| Fallback/direct 分支遗漏 meta | 所有 `emitAction` 路径统一走 `buildBaseMeta()` helper，确保 cwd/session_id/hook_type 不遗漏 |
