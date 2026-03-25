@@ -17,6 +17,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
     private let writeQueue = DispatchQueue(label: "codo.guardian.stdin")
+    private let lifecycleQueue = DispatchQueue(label: "codo.guardian.lifecycle")
     private let notificationService: NotificationService
     private let bunPath: String
     private let guardianPath: String
@@ -52,7 +53,7 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     }
 
     public var isAlive: Bool {
-        process?.isRunning ?? false
+        lifecycleQueue.sync { process?.isRunning ?? false }
     }
 
     /// Resolve the bun executable path by checking common locations
@@ -153,8 +154,12 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
     /// Send raw JSON line to Guardian stdin. Serialized via writeQueue.
     public func send(line: Data) async {
-        writeQueue.async { [weak self] in
-            guard let pipe = self?.stdinPipe, self?.isAlive == true else { return }
+        let pipe: Pipe? = lifecycleQueue.sync {
+            guard process?.isRunning == true else { return nil }
+            return stdinPipe
+        }
+        guard let pipe else { return }
+        writeQueue.async {
             var data = line
             data.append(UInt8(ascii: "\n"))
             do {
@@ -169,9 +174,6 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     public func start(config: [String: String]) throws {
         guard !crashBreaker.isTripped else { return }
 
-        intentionalStop = false
-        lastConfig = config
-
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bunPath)
         proc.arguments = [guardianPath]
@@ -184,10 +186,14 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
         proc.standardOutput = stdout
         proc.standardError = stderr
 
-        self.stdinPipe = stdin
-        self.stdoutPipe = stdout
-        self.stderrPipe = stderr
-        self.process = proc
+        lifecycleQueue.sync {
+            intentionalStop = false
+            lastConfig = config
+            self.stdinPipe = stdin
+            self.stdoutPipe = stdout
+            self.stderrPipe = stderr
+            self.process = proc
+        }
 
         // Monitor for unexpected termination
         proc.terminationHandler = { [weak self] _ in
@@ -197,9 +203,10 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
         try proc.run()
         crashBreaker.recordStart()
 
-        // Start background stdout reader
+        // Readers capture local pipe refs — not self.stdoutPipe/stderrPipe
+        let capturedStdout = stdout
         let thread = Thread { [weak self] in
-            self?.readStdoutLoop()
+            self?.readStdoutLoop(pipe: capturedStdout)
         }
         thread.qualityOfService = .userInitiated
         thread.name = "codo.guardian.stdout"
@@ -214,14 +221,16 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
 
     /// Stop the Guardian process (SIGTERM). Intentional stop — no auto-restart.
     public func stop() {
-        intentionalStop = true
-        if let proc = process, proc.isRunning {
-            proc.terminate()
+        lifecycleQueue.sync {
+            intentionalStop = true
+            if let proc = process, proc.isRunning {
+                proc.terminate()
+            }
+            process = nil
+            stdinPipe = nil
+            stdoutPipe = nil
+            stderrPipe = nil
         }
-        process = nil
-        stdinPipe = nil
-        stdoutPipe = nil
-        stderrPipe = nil
     }
 
     // MARK: - Private
@@ -230,19 +239,25 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     /// Delegates crash tracking to CrashLoopBreaker which resets on stability.
     private func handleTermination() {
         // If stop() was called intentionally, don't auto-restart
-        guard !intentionalStop else { return }
+        let wasIntentional = lifecycleQueue.sync { intentionalStop }
+        guard !wasIntentional else { return }
 
+        // Record failure outside lifecycleQueue to avoid nested sync
+        // (crashBreaker uses its own serial queue internally)
         let didTrip = crashBreaker.recordFailure()
         if didTrip { return }
 
         // Clear old pipes before restart
-        process = nil
-        stdinPipe = nil
-        stdoutPipe = nil
-        stderrPipe = nil
+        let config: [String: String]? = lifecycleQueue.sync {
+            process = nil
+            stdinPipe = nil
+            stdoutPipe = nil
+            stderrPipe = nil
+            return lastConfig
+        }
 
         // Restart after a short delay to avoid tight crash loops
-        guard let config = lastConfig else { return }
+        guard let config else { return }
         DispatchQueue.global(qos: .userInitiated).asyncAfter(
             deadline: .now() + 1.0
         ) { [weak self] in
@@ -255,8 +270,8 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     }
 
     /// Background stdout reader. Decodes each line as GuardianAction.
-    private func readStdoutLoop() {
-        guard let handle = stdoutPipe?.fileHandleForReading else { return }
+    private func readStdoutLoop(pipe: Pipe) {
+        let handle = pipe.fileHandleForReading
 
         var buffer = Data()
         let decoder = JSONDecoder()
