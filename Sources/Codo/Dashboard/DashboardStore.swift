@@ -77,6 +77,7 @@ final class DashboardStore {
     init(eventStore: EventStore? = nil) {
         self.eventStore = eventStore
         loadProjects()
+        migrateProjectsToSQLite()
         loadTodayStats()
     }
 
@@ -296,20 +297,95 @@ final class DashboardStore {
             return event.hookEventName ?? event.hook
         }
     }
+}
 
-    // MARK: - Persistence
+// MARK: - Project Persistence & Migration
 
-    private static let projectsKey = "CodoDashboardProjects"
+extension DashboardStore {
+    static let projectsKey = "CodoDashboardProjects"
 
-    private func persistProjects() {
-        guard let data = try? JSONEncoder().encode(projects) else { return }
-        UserDefaults.standard.set(data, forKey: Self.projectsKey)
+    func persistProjects() {
+        // Write to SQLite if available
+        if let eventStore {
+            for project in projects {
+                eventStore.upsertProject(ProjectRecord(
+                    cwd: project.id,
+                    name: project.name,
+                    customLogoPath: project.customLogoPath,
+                    lastSeen: project.lastSeen
+                ))
+            }
+        }
     }
 
-    private func loadProjects() {
+    func loadProjects() {
+        // Prefer SQLite if available and has data
+        if let eventStore {
+            let records = eventStore.loadProjects()
+            if !records.isEmpty {
+                projects = records.map {
+                    ProjectInfo(
+                        cwd: $0.cwd,
+                        customLogoPath: $0.customLogoPath,
+                        lastSeen: $0.lastSeen
+                    )
+                }
+                return
+            }
+        }
+
+        // Fall back to UserDefaults (pre-migration or no EventStore)
         guard let data = UserDefaults.standard.data(forKey: Self.projectsKey),
               let saved = try? JSONDecoder().decode([ProjectInfo].self, from: data)
         else { return }
         projects = saved
+    }
+
+    /// Migrate projects from UserDefaults to SQLite, then clear the key.
+    func migrateProjectsToSQLite() {
+        guard let eventStore else { return }
+
+        // Only migrate if UserDefaults data exists
+        guard let data = UserDefaults.standard.data(forKey: Self.projectsKey),
+              let saved = try? JSONDecoder().decode([ProjectInfo].self, from: data),
+              !saved.isEmpty
+        else { return }
+
+        // Check if SQLite already has projects (no need to migrate again)
+        if eventStore.projectCount() > 0 {
+            // Already migrated — just clean up UserDefaults
+            UserDefaults.standard.removeObject(forKey: Self.projectsKey)
+            return
+        }
+
+        // Backup to JSON before migration
+        let backupPath = "\(NSHomeDirectory())/.codo/projects-backup.json"
+        try? data.write(to: URL(fileURLWithPath: backupPath))
+
+        // Migrate each project with canonicalized cwd
+        for project in saved {
+            eventStore.upsertProject(ProjectRecord(
+                cwd: project.id,
+                name: project.name,
+                customLogoPath: project.customLogoPath,
+                lastSeen: project.lastSeen
+            ))
+        }
+
+        // Verify row counts match
+        let migratedCount = eventStore.projectCount()
+        if migratedCount >= saved.count {
+            UserDefaults.standard.removeObject(forKey: Self.projectsKey)
+            // Reload from SQLite to get canonicalized cwds
+            let records = eventStore.loadProjects()
+            projects = records.map {
+                ProjectInfo(
+                    cwd: $0.cwd,
+                    customLogoPath: $0.customLogoPath,
+                    lastSeen: $0.lastSeen
+                )
+            }
+        }
+        // If verification fails, keep UserDefaults as fallback
     }
 }

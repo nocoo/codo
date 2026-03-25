@@ -242,7 +242,8 @@ public final class EventStore: @unchecked Sendable {
     // MARK: - Vacuum
 
     /// Delete events and decisions older than `keepDays` days.
-    public func vacuum(keepDays: Int = 30) {
+    /// Daily stats are kept longer (`statsKeepDays`, default 90).
+    public func vacuum(keepDays: Int = 30, statsKeepDays: Int = 90) {
         queue.sync {
             let cutoff = daysAgoString(keepDays)
             _ = try? prepareAndBind(
@@ -253,7 +254,8 @@ public final class EventStore: @unchecked Sendable {
                 "DELETE FROM guardian_decisions WHERE timestamp < ?",
                 params: [.text(cutoff)]
             )
-            let dateCutoff = String(cutoff.prefix(10))
+            let statsCutoff = daysAgoString(statsKeepDays)
+            let dateCutoff = String(statsCutoff.prefix(10))
             _ = try? prepareAndBind(
                 "DELETE FROM daily_stats WHERE date < ?",
                 params: [.text(dateCutoff)]

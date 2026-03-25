@@ -469,6 +469,23 @@ struct EventStoreProjectTests {
         #expect(loaded[0].cwd == "/tmp/new")
         #expect(loaded[1].cwd == "/tmp/old")
     }
+
+    @Test func projectCountReturnsCorrectCount() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        #expect(store.projectCount() == 0)
+
+        store.upsertProject(ProjectRecord(cwd: "/tmp/a", name: "a"))
+        #expect(store.projectCount() == 1)
+
+        store.upsertProject(ProjectRecord(cwd: "/tmp/b", name: "b"))
+        #expect(store.projectCount() == 2)
+
+        // Upsert existing should not increase count
+        store.upsertProject(ProjectRecord(cwd: "/tmp/a", name: "a-renamed"))
+        #expect(store.projectCount() == 2)
+    }
 }
 
 // MARK: - Vacuum
@@ -509,6 +526,49 @@ struct EventStoreVacuumTests {
 
         let events = store.queryEvents()
         #expect(events.count == 1)
+    }
+
+    @Test func vacuumUsesLongerRetentionForDailyStats() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        // Manually insert a daily_stats row for 45 days ago
+        // (insertDecision always uses todayString for daily_stats)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = .current
+        let fortyFiveDaysAgo = Calendar.current.date(
+            byAdding: .day, value: -45, to: Date()
+        )!
+        let oldDate = formatter.string(from: fortyFiveDaysAgo)
+
+        try store.executeSql("""
+        INSERT INTO daily_stats
+        (date, project_cwd, events_count, sent_count, suppressed_count,
+         prompt_tokens, completion_tokens, llm_calls)
+        VALUES ('\(oldDate)', '/tmp/proj', 5, 3, 2, 1000, 500, 5)
+        """)
+
+        // Insert today's stats via decision
+        store.insertDecision(DecisionRecord(
+            projectCwd: "/tmp/proj",
+            action: "send",
+            promptTokens: 200,
+            completionTokens: 80
+        ))
+
+        // Vacuum: events/decisions at 30 days, stats at 90 days (default)
+        store.vacuum(keepDays: 30, statsKeepDays: 90)
+
+        // Daily_stats for 45 days ago should survive (within 90-day retention)
+        let allStats = store.dailyStats(days: 90)
+        #expect(allStats.count == 2) // today + 45 days ago
+
+        // Now vacuum with shorter stats retention that excludes the old row
+        store.vacuum(keepDays: 30, statsKeepDays: 30)
+
+        let reducedStats = store.dailyStats(days: 90)
+        #expect(reducedStats.count == 1) // only today remains
     }
 }
 

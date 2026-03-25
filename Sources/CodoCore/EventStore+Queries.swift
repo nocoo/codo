@@ -186,6 +186,20 @@ extension EventStore {
         }
     }
 
+    /// Count projects in the database.
+    public func projectCount() -> Int {
+        queue.sync {
+            let sql = "SELECT COUNT(*) FROM projects"
+            guard let stmt = try? prepareQuery(sql, params: [])
+            else { return 0 }
+            defer { sqlite3_finalize(stmt) }
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                return Int(sqlite3_column_int(stmt, 0))
+            }
+            return 0
+        }
+    }
+
     /// Load all projects from the database.
     public func loadProjects() -> [ProjectRecord] {
         queue.sync {

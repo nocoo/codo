@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Initialize SQLite event store for persistent dashboard data
         do {
             eventStore = try EventStore()
+            // Auto-vacuum old data (>30 days) on startup
+            eventStore?.vacuum(keepDays: 30)
         } catch {
             logger.error("Failed to open EventStore: \(error)")
             // Continue without persistence — DashboardStore accepts nil
