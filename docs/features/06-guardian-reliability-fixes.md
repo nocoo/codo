@@ -254,6 +254,11 @@ done
 | 4 | `Sources/CodoCore/GuardianProcess.swift` | Add killOrphans static method (PPID=1 filter + absolute path substring match) | ✅ 0e12281 |
 | 5 | `Sources/Codo/AppDelegate.swift` | Call killOrphans in applicationDidFinishLaunching (cold start only) | ✅ b34d2b7 |
 | 6 | Manual | Fix provider config + re-enable guardian + kill zombies | ✅ 2026-03-25 |
+| 7 | `Sources/CodoCore/GuardianProcess.swift` | Add lifecycleQueue to protect all mutable state (race condition fix) | ✅ e06a36a |
+| 8 | `Sources/Codo/AppDelegate.swift` | Add stop-before-spawn guard in spawnGuardianIfNeeded, simplify settingsDidSave | ✅ 14adcf2 |
+| 9 | `guardian/state.ts` | Harden state.ts: isGenericTask, truncate, summarizeEvent, updateState — accept unknown | ✅ 5717da1 |
+| 10 | `guardian/state.test.ts`, `guardian/main.test.ts` | Regression tests for object-typed fields in updateState/processLine | ✅ 23fbb8b |
+| 11 | `Tests/CodoCoreTests/GuardianProcessTests.swift` | killOrphans smoke tests (non-matching path, self-PID exclusion) | ✅ 8794a96 |
 
 ## Verification
 
