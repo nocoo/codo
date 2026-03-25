@@ -32,6 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         EditMenuSetup.install()
         startDaemon()
+
+        // Clean up orphaned guardians from previous sessions (cold start only)
+        if let guardianPath = GuardianPathResolver.resolve() {
+            GuardianProcess.killOrphans(guardianPath: guardianPath)
+        }
+
         spawnGuardianIfNeeded()
 
         dashboardStore.startPolling(
