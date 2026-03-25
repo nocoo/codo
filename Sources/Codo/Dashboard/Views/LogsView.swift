@@ -55,11 +55,20 @@ struct LogsView: View {
 
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fileDescriptor,
-            eventMask: .write,
+            eventMask: [.write, .rename, .delete],
             queue: .main
         )
         source.setEventHandler { [self] in
-            loadLogFile()
+            let event = source.data
+            if event.contains(.rename) || event.contains(.delete) {
+                // File was rotated/deleted — reopen after new file is created
+                stopMonitoring()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    startMonitoring()
+                }
+            } else {
+                loadLogFile()
+            }
         }
         source.setCancelHandler {
             close(fileDescriptor)

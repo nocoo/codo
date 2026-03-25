@@ -56,102 +56,6 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
         lifecycleQueue.sync { process?.isRunning ?? false }
     }
 
-    /// Resolve the bun executable path by checking common locations
-    /// and falling back to `which bun`.
-    public static func resolveBunPath() -> String? {
-        // Check common paths in priority order
-        let candidates = [
-            "/opt/homebrew/bin/bun",    // Apple Silicon Homebrew
-            "/usr/local/bin/bun",       // Intel Homebrew / manual install
-            "\(NSHomeDirectory())/.bun/bin/bun" // bun self-install
-        ]
-
-        let fileManager = FileManager.default
-        for path in candidates where fileManager.isExecutableFile(atPath: path) {
-            return path
-        }
-
-        // Fall back to `which bun` for PATH-based installs
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        proc.arguments = ["bun"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            if proc.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let path = String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if let path, fileManager.isExecutableFile(atPath: path) {
-                    return path
-                }
-            }
-        } catch {
-            // which failed, no bun found
-        }
-
-        return nil
-    }
-
-    /// Kill orphaned guardian processes from previous Codo sessions.
-    ///
-    /// Uses `pgrep -f` to find processes whose command line contains `guardianPath`.
-    /// Since `guardianPath` is an absolute path (e.g. /Users/.../codo/guardian/main.ts),
-    /// this won't match guardians from a different project checkout.
-    /// Then filters to PPID == 1 (adopted by launchd = true orphans), so it won't
-    /// kill a guardian actively managed by a running Codo instance.
-    public static func killOrphans(guardianPath: String) {
-        let pgrep = Process()
-        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        pgrep.arguments = ["-f", guardianPath]
-        let pipe = Pipe()
-        pgrep.standardOutput = pipe
-        pgrep.standardError = FileHandle.nullDevice
-
-        do {
-            try pgrep.run()
-        } catch {
-            return
-        }
-        pgrep.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return }
-
-        let pids = output.split(separator: "\n")
-            .compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
-        let myPid = ProcessInfo.processInfo.processIdentifier
-
-        for pid in pids where pid != myPid {
-            // Check if this process is an orphan (PPID == 1, adopted by launchd)
-            let psProc = Process()
-            psProc.executableURL = URL(fileURLWithPath: "/bin/ps")
-            psProc.arguments = ["-p", "\(pid)", "-o", "ppid="]
-            let psPipe = Pipe()
-            psProc.standardOutput = psPipe
-            psProc.standardError = FileHandle.nullDevice
-
-            do {
-                try psProc.run()
-            } catch {
-                continue
-            }
-            psProc.waitUntilExit()
-
-            let psData = psPipe.fileHandleForReading.readDataToEndOfFile()
-            if let ppidStr = String(data: psData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               let ppid = Int32(ppidStr), ppid == 1 {
-                logger.notice("Killing orphaned guardian PID=\(pid)")
-                kill(pid, SIGTERM)
-            }
-        }
-    }
-
     /// Send raw JSON line to Guardian stdin. Serialized via writeQueue.
     public func send(line: Data) async {
         let pipe: Pipe? = lifecycleQueue.sync {
@@ -308,20 +212,14 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
     }
 
     /// Background stderr reader. Forwards each line to os.Logger and log file.
+    /// Rotates the log file to `.1` when it exceeds 5MB (checked every 1000 lines).
     private static func readStderrLoop(pipe: Pipe) {
         let logPath = "\(NSHomeDirectory())/.codo/guardian.log"
+        let maxSize: UInt64 = 5_000_000  // 5MB
+        let checkInterval = 1000         // check size every N lines
 
-        // Open in append mode (create if missing)
-        let fileManager = FileManager.default
-        if !fileManager.fileExists(atPath: logPath) {
-            fileManager.createFile(atPath: logPath, contents: nil)
-        }
-        guard let logHandle = FileHandle(forWritingAtPath: logPath) else { return }
-        logHandle.seekToEndOfFile()
-
-        // Write startup marker
-        let marker = "--- guardian stderr log started ---\n"
-        logHandle.write(Data(marker.utf8))
+        var logHandle = openOrCreateLog(at: logPath)
+        var lineCount = 0
 
         let handle = pipe.fileHandleForReading
         let dateFormatter = ISO8601DateFormatter()
@@ -343,12 +241,42 @@ public final class GuardianProcess: GuardianProvider, @unchecked Sendable {
                       let line = String(data: Data(lineData), encoding: .utf8) else { continue }
 
                 logger.notice("\(line, privacy: .public)")
-                // Also write to log file with timestamp
                 let logLine = "[\(dateFormatter.string(from: Date()))] \(line)\n"
-                logHandle.write(Data(logLine.utf8))
+                logHandle?.write(Data(logLine.utf8))
+
+                // Check rotation periodically
+                lineCount += 1
+                if lineCount % checkInterval == 0,
+                   shouldRotate(path: logPath, maxSize: maxSize) {
+                    logHandle?.closeFile()
+                    let backupPath = "\(logPath).1"
+                    try? FileManager.default.removeItem(atPath: backupPath)
+                    try? FileManager.default.moveItem(atPath: logPath, toPath: backupPath)
+                    logHandle = openOrCreateLog(at: logPath)
+                }
             }
         }
 
-        logHandle.closeFile()
+        logHandle?.closeFile()
+    }
+
+    /// Open (or create) a log file for appending, writing a startup marker.
+    private static func openOrCreateLog(at path: String) -> FileHandle? {
+        let fileManager = FileManager.default
+        if !fileManager.fileExists(atPath: path) {
+            fileManager.createFile(atPath: path, contents: nil)
+        }
+        guard let handle = FileHandle(forWritingAtPath: path) else { return nil }
+        handle.seekToEndOfFile()
+        let marker = "--- guardian stderr log started ---\n"
+        handle.write(Data(marker.utf8))
+        return handle
+    }
+
+    /// Check if a log file should be rotated based on size.
+    private static func shouldRotate(path: String, maxSize: UInt64) -> Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let size = attrs[.size] as? UInt64 else { return false }
+        return size > maxSize
     }
 }

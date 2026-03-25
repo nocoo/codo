@@ -652,7 +652,7 @@ public struct GuardianAction: Codable, Sendable {
 
 ---
 
-### Phase 4: guardian.log 轮转（rotate + reopen + LogsView 跟踪）
+### Phase 4: guardian.log 轮转（rotate + reopen + LogsView 跟踪） ✅ DONE
 
 当前 `GuardianProcess.readStderrLoop` 是 **static 方法**（L311），在进程启动时打开 `logHandle` 并一直持有到 EOF。单纯 rename 文件不够——rename 后旧 handle 仍然写入已移走的 inode，新 guardian.log 文件不会被创建。
 
