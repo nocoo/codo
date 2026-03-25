@@ -6,7 +6,7 @@ struct LiveEventStream: View {
 
     var body: some View {
         CardView(title: "Event Stream") {
-            if store.events.isEmpty {
+            if store.filteredEvents.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "waveform.path")
                         .font(.system(size: 24))
@@ -21,14 +21,14 @@ struct LiveEventStream: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 6) {
-                            ForEach(store.events) { event in
+                            ForEach(store.filteredEvents) { event in
                                 eventRow(event)
                                     .id(event.id)
                             }
                         }
                     }
                     .frame(maxHeight: 300)
-                    .onChange(of: store.events.first?.id) { _, newId in
+                    .onChange(of: store.filteredEvents.first?.id) { _, newId in
                         if let newId {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 proxy.scrollTo(newId, anchor: .top)

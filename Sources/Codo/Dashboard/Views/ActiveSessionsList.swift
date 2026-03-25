@@ -6,11 +6,11 @@ struct ActiveSessionsList: View {
 
     var body: some View {
         CardView(title: "Active Sessions") {
-            if store.activeSessions.isEmpty {
+            if store.filteredSessions.isEmpty {
                 emptyState
             } else {
                 VStack(spacing: 4) {
-                    ForEach(store.activeSessions) { session in
+                    ForEach(store.filteredSessions) { session in
                         sessionRow(session)
                     }
                 }

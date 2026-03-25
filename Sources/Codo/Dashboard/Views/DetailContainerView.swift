@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Switches between Dashboard, Settings, and Logs based on sidebar selection.
-/// Supports Cmd+1/2/3 keyboard shortcuts for quick navigation.
+/// Switches between Dashboard, History, Settings, and Logs based on sidebar selection.
+/// Supports Cmd+1/2/3/4 keyboard shortcuts for quick navigation.
 struct DetailContainerView: View {
     @Environment(DashboardStore.self) private var store
 
@@ -10,6 +10,9 @@ struct DetailContainerView: View {
             switch store.selectedNav {
             case .dashboard:
                 DashboardView()
+                    .transition(.opacity)
+            case .history:
+                HistoryView()
                     .transition(.opacity)
             case .settings:
                 SettingsView()
@@ -21,7 +24,6 @@ struct DetailContainerView: View {
         }
         .animation(.easeInOut(duration: 0.15), value: store.selectedNav)
         .background {
-            // Hidden buttons for Cmd+1/2/3 keyboard shortcuts
             keyboardShortcutButtons
         }
     }
@@ -31,11 +33,14 @@ struct DetailContainerView: View {
         Button("") { store.selectedNav = .dashboard }
             .keyboardShortcut("1", modifiers: .command)
             .hidden()
-        Button("") { store.selectedNav = .settings }
+        Button("") { store.selectedNav = .history }
             .keyboardShortcut("2", modifiers: .command)
             .hidden()
-        Button("") { store.selectedNav = .logs }
+        Button("") { store.selectedNav = .settings }
             .keyboardShortcut("3", modifiers: .command)
+            .hidden()
+        Button("") { store.selectedNav = .logs }
+            .keyboardShortcut("4", modifiers: .command)
             .hidden()
     }
 }

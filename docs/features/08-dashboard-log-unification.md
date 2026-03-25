@@ -739,7 +739,7 @@ source.setEventHandler { [self] in
 
 ---
 
-### Phase 5: Dashboard UI 增强
+### Phase 5: Dashboard UI 增强 ✅ DONE
 
 #### 5a. Project Filter — 分项目查看
 

@@ -3,7 +3,6 @@ import SwiftUI
 /// Sidebar navigation for the dashboard.
 struct SidebarView: View {
     @Environment(DashboardStore.self) private var store
-    @State private var selectedProject: ProjectInfo?
 
     var body: some View {
         @Bindable var store = store
@@ -33,10 +32,32 @@ struct SidebarView: View {
 
             if !store.projects.isEmpty {
                 Section("PROJECTS") {
+                    // "All" option to clear filter
+                    Button {
+                        store.selectedProjectCwd = nil
+                    } label: {
+                        Label("All Projects", systemImage: "folder")
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                    .background(
+                        store.selectedProjectCwd == nil
+                            ? Color.accentColor.opacity(0.15) : Color.clear
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
                     ForEach(store.projects) { project in
                         ProjectRow(project: project)
+                            .background(
+                                store.selectedProjectCwd == project.id
+                                    ? Color.accentColor.opacity(0.15) : Color.clear
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
                             .onTapGesture {
-                                selectedProject = project
+                                store.selectedProjectCwd =
+                                    store.selectedProjectCwd == project.id
+                                    ? nil : project.id
                             }
                     }
                 }

@@ -44,9 +44,26 @@ final class DashboardStore {
         didSet { persistProjects() }
     }
 
+    // MARK: - Project Filter
+
+    /// Selected project cwd for filtering. nil = show all.
+    var selectedProjectCwd: String?
+
+    /// Events filtered by selected project (or all if nil).
+    var filteredEvents: [EventEntry] {
+        guard let cwd = selectedProjectCwd else { return events }
+        return events.filter { $0.projectCwd == cwd }
+    }
+
+    /// Sessions filtered by selected project (or all if nil).
+    var filteredSessions: [SessionInfo] {
+        guard let cwd = selectedProjectCwd else { return activeSessions }
+        return activeSessions.filter { $0.cwd == cwd }
+    }
+
     // MARK: - Persistence
 
-    private let eventStore: EventStore?
+    let eventStore: EventStore?
 
     // MARK: - Polling
 
