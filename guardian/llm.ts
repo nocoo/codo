@@ -38,7 +38,7 @@ export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
           body: {
             type: "string",
-            description: "通知正文，简体中文摘要，不超过40个汉字，禁止复制原文",
+            description: "通知正文，简体中文摘要，2-5句概括要点，禁止复制原文",
           },
           subtitle: {
             type: "string",
@@ -96,7 +96,8 @@ export function buildSystemPrompt(state: StateStore): string {
     "",
     "## 强制规则",
     "- 所有通知的 title 和 body 必须使用简体中文，禁止使用英文",
-    "- title 不超过15个汉字，body 不超过40个汉字",
+    "- title 不超过15个汉字",
+    "- body 用2-5句简体中文概括要点，不需要凑数，信息量不大时1-2句即可",
     "- body 必须是你自己撰写的摘要，禁止复制粘贴原文",
     "- 如果原始信息是英文，翻译并概括为中文",
     "",

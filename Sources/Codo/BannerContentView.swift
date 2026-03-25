@@ -116,8 +116,8 @@ final class BannerContentView: NSView {
         var bodyView: NSTextField?
         if let body = message.body, !body.isEmpty {
             let label = makeBannerAttributedLabel(
-                MarkdownRenderer.render(body, maxLines: 8),
-                maxLines: 8
+                MarkdownRenderer.render(body, maxLines: 12),
+                maxLines: 12
             )
             addSubview(label)
             bodyView = label
