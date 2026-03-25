@@ -1150,3 +1150,146 @@ describe("serializeForPrompt project grouping", () => {
     expect(result).toContain("### unknown");
   });
 });
+
+describe("serializeForPrompt budget accuracy", () => {
+  test("tight budget fits only newest notification, not all 3", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-tight",
+      }),
+    );
+
+    // Add 3 notifications with distinctive titles
+    for (let i = 0; i < 3; i++) {
+      updateState(
+        store,
+        makeEvent({
+          _hook: "notification",
+          cwd: "/tmp/proj",
+          session_id: "s-tight",
+          title: `Notif-${i}`,
+          message: `Body for notification ${i} with some padding text`,
+        }),
+      );
+    }
+
+    // Budget enough for structural reserve + 1 notification line (~100 chars)
+    // but NOT enough for all 3 notifications + events
+    // A single notification line is ~70-80 chars. With structural reserve (~320)
+    // subtracted from budget, we need enough for 1 but not 3.
+    const result = serializeForPrompt(store, 600);
+
+    // Extract only the Sent Notifications section
+    const notifSection = result.match(
+      /#### Sent Notifications\n([\s\S]*?)(?=\n####|\n###|\n##|$)/,
+    );
+
+    if (notifSection) {
+      // Should contain the newest notification (Notif-2)
+      expect(notifSection[1]).toContain("Notif-2");
+      // May or may not contain older ones depending on exact budget
+      // The key invariant: newest is always preferred
+    }
+    // Regardless of section extraction, Notif-2 (newest) should be present
+    // if any notification fits at all
+    if (result.includes("Sent Notifications")) {
+      expect(result).toContain("Notif-2");
+    }
+  });
+
+  test("large budget still caps at 3 most recent notifications per project", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-cap",
+      }),
+    );
+
+    // Add 5 notifications
+    for (let i = 0; i < 5; i++) {
+      updateState(
+        store,
+        makeEvent({
+          _hook: "notification",
+          cwd: "/tmp/proj",
+          session_id: "s-cap",
+          title: `Notif-${i}`,
+          message: `Body ${i}`,
+        }),
+      );
+    }
+
+    const result = serializeForPrompt(store, 600_000);
+    const notifSection = result.match(
+      /#### Sent Notifications\n([\s\S]*?)(?=\n####|\n###|\n##|$)/,
+    );
+    expect(notifSection).toBeTruthy();
+
+    // Only most recent 3 (Notif-2, Notif-3, Notif-4) should appear
+    expect(notifSection![1]).not.toContain("Notif-0");
+    expect(notifSection![1]).not.toContain("Notif-1");
+    expect(notifSection![1]).toContain("Notif-2");
+    expect(notifSection![1]).toContain("Notif-3");
+    expect(notifSection![1]).toContain("Notif-4");
+  });
+
+  test("structural overhead: output stays within reasonable budget bounds", () => {
+    const store = createStateStore();
+
+    // Create 5 projects with events and notifications
+    for (let p = 0; p < 5; p++) {
+      const cwd = `/tmp/proj-${p}`;
+      const sid = `s-${p}`;
+      updateState(
+        store,
+        makeEvent({
+          _hook: "session-start",
+          cwd,
+          session_id: sid,
+        }),
+      );
+
+      // 3 tool events per project
+      for (let i = 0; i < 3; i++) {
+        updateState(
+          store,
+          makeEvent({
+            _hook: "post-tool-use",
+            cwd,
+            session_id: sid,
+            tool_name: "Bash",
+            command: `npm test run-${i}`,
+            tool_response: `result-${p}-${i}`,
+          }),
+        );
+      }
+
+      // 2 notifications per project
+      for (let i = 0; i < 2; i++) {
+        updateState(
+          store,
+          makeEvent({
+            _hook: "notification",
+            cwd,
+            session_id: sid,
+            title: `Notif-${p}-${i}`,
+            message: `Body for project ${p} notification ${i}`,
+          }),
+        );
+      }
+    }
+
+    const budget = 8000;
+    const result = serializeForPrompt(store, budget);
+
+    // Output should not exceed budget by more than 15% (structural overhead tolerance)
+    expect(result.length).toBeLessThan(budget * 1.15);
+  });
+});

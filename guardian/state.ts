@@ -250,6 +250,17 @@ export function serializeForPrompt(
   charBudget: number = 600_000,
 ): string {
   let remaining = charBudget;
+
+  // Reserve for structural markdown (section headers, separators, join newlines).
+  // ~200 for global headers ("## Active Projects", "## Event History", "## Summary")
+  // ~120 per project ("### /path", "#### Sent Notifications", "#### Event Timeline", blank lines)
+  const structuralReserve = Math.min(
+    200 + store.projects.size * 120,
+    Math.floor(charBudget * 0.15), // cap at 15% to protect small budgets
+  );
+  remaining -= structuralReserve;
+  if (remaining < 500) remaining = 500; // floor: always allow some content
+
   const parts: string[] = [];
 
   // ── Step 1: Active Projects summary ──
@@ -278,23 +289,27 @@ export function serializeForPrompt(
   }
 
   // ── Step 2: Notification history (priority reserve) ──
-  // For each active project, render most recent 3 notifications BEFORE event selection
-  // to guarantee de-duplication context is always available
+  // For each project, select up to 3 most recent notifications (newest first)
+  // BEFORE event selection to guarantee de-duplication context is always available.
+  // Per-notification selection ensures at least the newest notification survives tight budgets.
   const notifByProject = new Map<string, string[]>();
   for (const [, project] of store.projects) {
     const notifs = project.recentNotifications.slice(-3);
     if (notifs.length === 0) continue;
 
     const lines: string[] = [];
-    for (const n of notifs) {
+    // Select from newest to oldest, stop when budget exhausted
+    for (let i = notifs.length - 1; i >= 0; i--) {
+      const n = notifs[i];
       const time = new Date(n.time).toISOString();
       const bodyPart = n.body ? ` — ${n.body}` : "";
-      lines.push(`- [${time}] ${n.title}${bodyPart}`);
+      const line = `- [${time}] ${n.title}${bodyPart}`;
+      if (line.length > remaining) break;
+      lines.unshift(line); // maintain chronological order
+      remaining -= line.length;
     }
-    const chunk = lines.join("\n");
-    if (chunk.length <= remaining) {
+    if (lines.length > 0) {
       notifByProject.set(project.cwd, lines);
-      remaining -= chunk.length;
     }
   }
 
