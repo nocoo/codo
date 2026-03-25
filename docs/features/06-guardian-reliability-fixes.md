@@ -246,14 +246,14 @@ done
 
 ## Atomic Commits
 
-| # | Scope | Description |
-|---|-------|-------------|
-| 1 | `guardian/fallback.ts` | Harden truncate to accept unknown; remove unsafe `as string` casts |
-| 2 | `guardian/llm.ts` | Add stringify helper; replace all unsafe `as string` casts in buildUserMessage |
-| 3 | `guardian/fallback.test.ts`, `guardian/llm.test.ts` | Tests for truncate edge cases and buildUserMessage with object payloads |
-| 4 | `Sources/CodoCore/GuardianProcess.swift` | Add killOrphans static method (PPID=1 filter + absolute path substring match) |
-| 5 | `Sources/Codo/AppDelegate.swift` | Call killOrphans in applicationDidFinishLaunching (cold start only) |
-| 6 | Manual | Fix provider config + re-enable guardian + kill zombies |
+| # | Scope | Description | Status |
+|---|-------|-------------|--------|
+| 1 | `guardian/fallback.ts` | Harden truncate to accept unknown; remove unsafe `as string` casts | ✅ c830d96 |
+| 2 | `guardian/llm.ts` | Add stringify helper; replace all unsafe `as string` casts in buildUserMessage | ✅ e6b06a1 |
+| 3 | `guardian/fallback.test.ts`, `guardian/llm.test.ts` | Tests for truncate edge cases and buildUserMessage with object payloads | ✅ 1b0a638 |
+| 4 | `Sources/CodoCore/GuardianProcess.swift` | Add killOrphans static method (PPID=1 filter + absolute path substring match) | ✅ 0e12281 |
+| 5 | `Sources/Codo/AppDelegate.swift` | Call killOrphans in applicationDidFinishLaunching (cold start only) | ✅ b34d2b7 |
+| 6 | Manual | Fix provider config + re-enable guardian + kill zombies | ✅ 2026-03-25 |
 
 ## Verification
 
