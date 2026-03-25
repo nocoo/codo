@@ -121,3 +121,35 @@ struct GuardianActionTests {
         #expect(decoded.notification?.title == original.notification?.title)
     }
 }
+
+@Suite("GuardianProcess killOrphans")
+struct KillOrphansTests {
+
+    @Test("killOrphans with non-matching path does not crash")
+    func killOrphansNonMatching() {
+        // Use a path that no running process could match
+        let fakePath = "/nonexistent/\(UUID().uuidString)/guardian/main.ts"
+        // Should complete without error — pgrep returns empty, no kills
+        GuardianProcess.killOrphans(guardianPath: fakePath)
+        // If we get here without crashing, the test passes
+    }
+
+    @Test("killOrphans does not kill the test process itself")
+    func killOrphansSkipsSelf() {
+        // The method filters out ProcessInfo.processInfo.processIdentifier.
+        // Use the test binary's own command line as the search path — pgrep -f
+        // will match this process, but killOrphans should skip it (myPid filter)
+        // and also skip it because PPID != 1 (test runner is our parent, not launchd).
+        let myPid = ProcessInfo.processInfo.processIdentifier
+        let args = ProcessInfo.processInfo.arguments
+        guard let binaryPath = args.first else { return }
+
+        // This won't actually match "guardian/main.ts" in our command line,
+        // but we can verify the pgrep + PPID filter logic doesn't crash
+        // when called with a real path that exists on disk
+        GuardianProcess.killOrphans(guardianPath: binaryPath)
+
+        // Verify we're still alive (the method didn't kill us)
+        #expect(ProcessInfo.processInfo.processIdentifier == myPid)
+    }
+}
