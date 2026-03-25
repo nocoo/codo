@@ -84,20 +84,21 @@ function getOrCreateProject(store: StateStore, cwd: string): ProjectState {
   return project;
 }
 
-function isGenericTask(message: string): boolean {
+function isGenericTask(message: unknown): boolean {
+  if (typeof message !== "string") return false;
   return GENERIC_TASK_PATTERNS.some((p) => p.test(message.trim()));
 }
 
 function summarizeEvent(event: HookEvent): string {
   switch (event._hook) {
     case "stop":
-      return `stop: ${truncate(event.last_assistant_message as string, 80)}`;
+      return `stop: ${truncate(event.last_assistant_message, 80)}`;
     case "notification":
       return `notification: ${event.title ?? "untitled"}`;
     case "post-tool-use":
       return `tool: ${event.tool_name ?? "unknown"} — ${truncate(extractCommand(event), 60)}`;
     case "post-tool-use-failure":
-      return `tool-fail: ${event.tool_name ?? "unknown"} — ${truncate(event.error as string ?? "", 60)}`;
+      return `tool-fail: ${event.tool_name ?? "unknown"} — ${truncate(event.error ?? "", 60)}`;
     case "session-start":
       return `session-start: ${event.model ?? "unknown model"}`;
     case "session-end":
@@ -107,9 +108,8 @@ function summarizeEvent(event: HookEvent): string {
   }
 }
 
-function truncate(s: string | undefined | null, max: number): string {
-  if (!s) return "";
-  if (typeof s !== "string") return String(s).slice(0, max);
+function truncate(s: unknown, max: number): string {
+  if (typeof s !== "string") return s == null ? "" : String(s).slice(0, max);
   return s.length <= max ? s : `${s.slice(0, max)}...`;
 }
 
@@ -152,7 +152,7 @@ export function updateState(store: StateStore, event: HookEvent): void {
   switch (event._hook) {
     case "session-start":
       project.sessionId = event.session_id;
-      project.model = (event.model as string) ?? null;
+      project.model = typeof event.model === "string" ? event.model : null;
       project.sessionActive = true;
       log.info("updateState", "session started", {
         cwd: project.cwd,
@@ -166,19 +166,16 @@ export function updateState(store: StateStore, event: HookEvent): void {
       break;
 
     case "stop": {
-      const msg = event.last_assistant_message as string | undefined;
-      if (msg && !isGenericTask(msg)) {
-        // Only overwrite task if the new message is specific
-        if (!project.task || !isGenericTask(msg)) {
-          project.task = truncate(msg, 200);
-        }
+      const msg = event.last_assistant_message;
+      if (typeof msg === "string" && msg && !isGenericTask(msg)) {
+        project.task = truncate(msg, 200);
       }
       break;
     }
 
     case "notification":
       project.recentNotifications.push({
-        title: (event.title as string) ?? "Untitled",
+        title: typeof event.title === "string" ? event.title : "Untitled",
         time: Date.now(),
       });
       // Keep last 10 notifications
@@ -192,10 +189,7 @@ export function updateState(store: StateStore, event: HookEvent): void {
 
     case "post-tool-use":
       if (tier === "important") {
-        project.lastStatus = truncate(
-          event.tool_response as string,
-          200,
-        );
+        project.lastStatus = truncate(event.tool_response, 200);
         log.debug("updateState", "lastStatus updated", {
           hook: event._hook,
           status: (project.lastStatus ?? "").slice(0, 60),
@@ -204,7 +198,7 @@ export function updateState(store: StateStore, event: HookEvent): void {
       break;
 
     case "post-tool-use-failure":
-      project.lastStatus = truncate(event.error as string, 200);
+      project.lastStatus = truncate(event.error, 200);
       log.debug("updateState", "lastStatus updated (failure)", {
         hook: event._hook,
         status: (project.lastStatus ?? "").slice(0, 60),
