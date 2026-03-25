@@ -159,6 +159,33 @@ extension EventStore {
         }
     }
 
+    /// Aggregate today's daily_stats across all projects.
+    public func todayStats() -> TodayStatsSummary {
+        queue.sync {
+            let today = todayString()
+            let sql = """
+            SELECT COALESCE(SUM(sent_count), 0),
+                   COALESCE(SUM(suppressed_count), 0),
+                   COALESCE(SUM(prompt_tokens), 0),
+                   COALESCE(SUM(completion_tokens), 0)
+            FROM daily_stats WHERE date = ?
+            """
+            guard let stmt = try? prepareQuery(sql, params: [.text(today)])
+            else { return .empty }
+            defer { sqlite3_finalize(stmt) }
+
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                return TodayStatsSummary(
+                    sent: Int(sqlite3_column_int(stmt, 0)),
+                    suppressed: Int(sqlite3_column_int(stmt, 1)),
+                    promptTokens: Int(sqlite3_column_int(stmt, 2)),
+                    completionTokens: Int(sqlite3_column_int(stmt, 3))
+                )
+            }
+            return .empty
+        }
+    }
+
     /// Load all projects from the database.
     public func loadProjects() -> [ProjectRecord] {
         queue.sync {

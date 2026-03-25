@@ -7,7 +7,7 @@ enum Banner {
     static let maxWidth: CGFloat = 400
     static let minHeight: CGFloat = 72
     static let cornerRadius: CGFloat = 16
-    static let screenMargin: CGFloat = 24
+    static let screenMargin: CGFloat = 12
 
     // Shadow overflow — extra padding around glass for shadows to render
     static let shadowPadding: CGFloat = 48  // >= ambient shadowRadius(40) + offset(8)
@@ -37,7 +37,7 @@ enum Banner {
     static let closeButtonSize: CGFloat = 24
 
     // Timing
-    static let displayDuration: TimeInterval = 5.0
+    static let displayDuration: TimeInterval = 10.0
     static let slideInDuration: TimeInterval = 0.3
     static let slideOutDuration: TimeInterval = 0.2
 

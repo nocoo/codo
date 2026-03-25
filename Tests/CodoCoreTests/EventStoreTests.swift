@@ -274,6 +274,151 @@ struct EventStoreDailyStatsTests {
     }
 }
 
+// MARK: - Today Stats Aggregation
+
+@Suite("EventStore — Today Stats")
+struct EventStoreTodayStatsTests {
+    @Test func todayStatsAggregatesAllProjects() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        // Insert decisions for two projects
+        store.insertDecision(DecisionRecord(
+            projectCwd: "/tmp/a", action: "send",
+            promptTokens: 100, completionTokens: 50
+        ))
+        store.insertDecision(DecisionRecord(
+            projectCwd: "/tmp/b", action: "suppress",
+            promptTokens: 200, completionTokens: 80
+        ))
+        store.insertDecision(DecisionRecord(
+            projectCwd: "/tmp/a", action: "send",
+            promptTokens: 150, completionTokens: 60
+        ))
+
+        let stats = store.todayStats()
+        #expect(stats.sent == 2)
+        #expect(stats.suppressed == 1)
+        #expect(stats.promptTokens == 450)
+        #expect(stats.completionTokens == 190)
+    }
+
+    @Test func todayStatsEmptyDatabase() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        let stats = store.todayStats()
+        #expect(stats.sent == 0)
+        #expect(stats.suppressed == 0)
+        #expect(stats.promptTokens == 0)
+        #expect(stats.completionTokens == 0)
+    }
+
+    @Test func todayStatsIncludesUnattributed() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        // Decision without project cwd
+        store.insertDecision(DecisionRecord(projectCwd: nil, action: "send"))
+        store.insertDecision(DecisionRecord(projectCwd: "/tmp/a", action: "suppress"))
+
+        let stats = store.todayStats()
+        #expect(stats.sent == 1)
+        #expect(stats.suppressed == 1)
+    }
+}
+
+// MARK: - Decision from GuardianAction (simulates DashboardStore.ingestGuardianAction)
+
+@Suite("EventStore — Decision from Meta")
+struct EventStoreDecisionFromMetaTests {
+    @Test func insertDecisionWithAllMetaFields() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        // Simulate what DashboardStore.ingestGuardianAction does
+        store.insertDecision(DecisionRecord(
+            sessionId: "s1",
+            projectCwd: "/tmp/proj",
+            hookType: "stop",
+            tier: "important",
+            action: "send",
+            title: "Build complete",
+            model: "claude-sonnet",
+            promptTokens: 500,
+            completionTokens: 100,
+            latencyMs: 1200
+        ))
+
+        let decisions = store.queryDecisions()
+        #expect(decisions.count == 1)
+        #expect(decisions[0].sessionId == "s1")
+        #expect(decisions[0].tier == "important")
+        #expect(decisions[0].model == "claude-sonnet")
+        #expect(decisions[0].latencyMs == 1200)
+
+        // Verify daily_stats updated
+        let stats = store.todayStats()
+        #expect(stats.sent == 1)
+        #expect(stats.promptTokens == 500)
+    }
+
+    @Test func insertDecisionWithNilMeta() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        // Simulate decision from old guardian without meta
+        store.insertDecision(DecisionRecord(
+            action: "suppress",
+            reason: "duplicate"
+        ))
+
+        let decisions = store.queryDecisions()
+        #expect(decisions.count == 1)
+        #expect(decisions[0].sessionId == nil)
+        #expect(decisions[0].tier == nil)
+        #expect(decisions[0].model == nil)
+        #expect(decisions[0].reason == "duplicate")
+    }
+}
+
+// MARK: - Event from Direct Notification (simulates DashboardStore.ingestDirectNotification)
+
+@Suite("EventStore — Direct Notification Events")
+struct EventStoreDirectNotifTests {
+    @Test func insertNotificationEvent() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        store.insertEvent(EventRecord(
+            type: "notification",
+            projectCwd: "/tmp/myproj",
+            projectName: "myproj",
+            summary: "Build Done"
+        ))
+
+        let events = store.queryEvents(type: "notification")
+        #expect(events.count == 1)
+        #expect(events[0].projectCwd == "/tmp/myproj")
+        #expect(events[0].summary == "Build Done")
+    }
+
+    @Test func insertNotificationWithoutCwd() throws {
+        let store = try makeStore()
+        defer { store.close() }
+
+        store.insertEvent(EventRecord(
+            type: "notification",
+            projectCwd: nil,
+            summary: "Direct Test"
+        ))
+
+        let events = store.queryEvents()
+        #expect(events.count == 1)
+        #expect(events[0].projectCwd == nil)
+    }
+}
+
 // MARK: - Projects
 
 @Suite("EventStore — Projects")

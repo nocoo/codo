@@ -117,6 +117,31 @@ public struct DailyStatsRecord: Codable, Sendable {
     public static let unattributed = "__unattributed__"
 }
 
+// MARK: - Today Stats Summary
+
+/// Aggregated totals for today across all projects.
+public struct TodayStatsSummary: Sendable {
+    public let sent: Int
+    public let suppressed: Int
+    public let promptTokens: Int
+    public let completionTokens: Int
+
+    public init(
+        sent: Int = 0,
+        suppressed: Int = 0,
+        promptTokens: Int = 0,
+        completionTokens: Int = 0
+    ) {
+        self.sent = sent
+        self.suppressed = suppressed
+        self.promptTokens = promptTokens
+        self.completionTokens = completionTokens
+    }
+
+    /// Empty summary with all zeros.
+    public static let empty = TodayStatsSummary()
+}
+
 // MARK: - Project Record
 
 /// A project record stored in the SQLite `projects` table.

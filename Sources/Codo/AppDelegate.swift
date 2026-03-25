@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     // Dashboard — initialized lazily on main thread in applicationDidFinishLaunching
     private var dashboardStore: DashboardStore!
+    private var eventStore: EventStore?
 
     private let socketDir = "\(NSHomeDirectory())/.codo"
     private var socketPath: String { "\(socketDir)/codo.sock" }
@@ -26,7 +27,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - App Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        dashboardStore = DashboardStore()
+        // Initialize SQLite event store for persistent dashboard data
+        do {
+            eventStore = try EventStore()
+        } catch {
+            logger.error("Failed to open EventStore: \(error)")
+            // Continue without persistence — DashboardStore accepts nil
+        }
+
+        dashboardStore = DashboardStore(eventStore: eventStore)
         setupStatusItem()
         setupMenu()
         UNUserNotificationCenter.current().delegate = self
@@ -56,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationWillTerminate(_ notification: Notification) {
         guardian?.stop()
         socketServer?.stop()
+        eventStore?.close()
         try? FileManager.default.removeItem(atPath: socketPath)
     }
 
@@ -84,49 +94,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func setupMenu() {
         let menu = NSMenu()
 
-        let versionItem = NSMenuItem(
-            title: "Codo v\(CodoInfo.version)",
-            action: nil,
-            keyEquivalent: ""
-        )
+        let versionItem = NSMenuItem(title: "Codo v\(CodoInfo.version)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
         menu.addItem(NSMenuItem.separator())
 
-        let toggleItem = NSMenuItem(
-            title: "AI Guardian",
-            action: #selector(toggleGuardian(_:)),
-            keyEquivalent: ""
-        )
+        let toggleItem = NSMenuItem(title: "AI Guardian", action: #selector(toggleGuardian(_:)), keyEquivalent: "")
         toggleItem.target = self
         toggleItem.state = guardianSettings.guardianEnabled ? .on : .off
         menu.addItem(toggleItem)
         guardianToggleItem = toggleItem
 
-        let settingsItem = NSMenuItem(
-            title: "Dashboard...",
-            action: #selector(openDashboard),
-            keyEquivalent: "d"
-        )
+        let settingsItem = NSMenuItem(title: "Dashboard...", action: #selector(openDashboard), keyEquivalent: "d")
         settingsItem.target = self
         menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
 
-        let loginItem = NSMenuItem(
-            title: "Launch at Login",
-            action: #selector(toggleLoginItem(_:)),
-            keyEquivalent: ""
-        )
+        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLoginItem(_:)), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = isLoginItemEnabled ? .on : .off
         menu.addItem(loginItem)
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(
-            title: "Quit Codo",
-            action: #selector(quitApp),
-            keyEquivalent: "q"
-        )
+        let quitItem = NSMenuItem(title: "Quit Codo", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -243,27 +233,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             Task { _ = await service.requestPermission() }
         }
 
-        socketServer = SocketServer(socketPath: socketPath, asyncRawHandler: { [weak self] data in
-            guard let self else { return .error("shutting down") }
-
-            let routed: RoutedMessage
-            do {
-                routed = try MessageRouter.route(data)
-            } catch {
-                return .error("invalid json")
+        socketServer = SocketServer(
+            socketPath: socketPath,
+            asyncRawHandler: { [weak self] data in
+                guard let self else { return .error("shutting down") }
+                return await self.handleSocketMessage(data)
             }
-
-            switch routed {
-            case .notification(let message):
-                guard let service = self.notificationService else {
-                    return .error("notifications unavailable (no app bundle)")
-                }
-                return await service.post(message: message)
-            case .hookEvent(_, let rawJSON):
-                self.dispatchHookEvent(rawJSON: rawJSON)
-                return .ok
-            }
-        })
+        )
 
         do {
             try socketServer?.start()
@@ -274,8 +250,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    private func handleSocketMessage(_ data: Data) async -> CodoResponse {
+        let routed: RoutedMessage
+        do {
+            routed = try MessageRouter.route(data)
+        } catch {
+            return .error("invalid json")
+        }
+
+        switch routed {
+        case .notification(let message):
+            guard let service = notificationService else {
+                return .error("notifications unavailable (no app bundle)")
+            }
+            Task { @MainActor in self.dashboardStore.ingestDirectNotification(message) }
+            return await service.post(message: message)
+        case .hookEvent(_, let rawJSON):
+            dispatchHookEvent(rawJSON: rawJSON)
+            return .ok
+        }
+    }
+
     private func dispatchHookEvent(rawJSON: Data) {
-        // Tap for dashboard: decode and ingest on main thread
         if let event = try? JSONDecoder().decode(HookEvent.self, from: rawJSON) {
             Task { @MainActor [weak self] in
                 self?.dashboardStore.ingestHookEvent(event)

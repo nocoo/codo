@@ -611,7 +611,7 @@ public struct GuardianAction: Codable, Sendable {
 
 ---
 
-### Phase 3: DashboardStore 持久化改造
+### Phase 3: DashboardStore 持久化改造 ✅ DONE
 
 #### 3a. `Sources/Codo/Dashboard/DashboardStore.swift` — MODIFY
 
