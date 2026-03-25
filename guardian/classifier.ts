@@ -82,10 +82,25 @@ export function classifyBashEvent(command: string, output: string): EventTier {
 /** Classify any hook event for processing. */
 export function classifyEvent(event: HookEvent): ClassifyResult {
   switch (event._hook) {
-    case "stop":
+    case "stop": {
+      // Short or empty last_assistant_message — not worth sending to LLM
+      const msg = event.last_assistant_message;
+      const msgStr = typeof msg === "string" ? msg : "";
+      if (msgStr.trim().length < 20) {
+        log.debug("classifyEvent", "stop with short content, downgrading", {
+          msgLen: msgStr.trim().length,
+        });
+        return { tier: "contextual", shouldTriggerLLM: false };
+      }
+      return { tier: "important", shouldTriggerLLM: true };
+    }
+
     case "notification":
     case "post-tool-use-failure":
       return { tier: "important", shouldTriggerLLM: true };
+
+    case "subagent-stop":
+      return { tier: "noise", shouldTriggerLLM: false };
 
     case "session-start":
     case "session-end":

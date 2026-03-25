@@ -34,6 +34,10 @@ export function fallbackNotification(
 
     case "stop": {
       const body = truncate(event.last_assistant_message, 100);
+      if (!body) {
+        log.debug("fallback", "stop suppressed (empty body)");
+        return null;
+      }
       log.info("fallback", "generating stop notification", {
         title: "Task Complete",
       });
@@ -79,12 +83,8 @@ export function fallbackNotification(
     }
 
     case "session-start":
-      log.info("fallback", "generating session-start notification");
-      return {
-        title: "Session Started",
-        body: event.model as string | undefined,
-        source,
-      };
+      log.debug("fallback", "session-start suppressed");
+      return null;
 
     case "session-end":
       log.debug("fallback", "session-end suppressed");
