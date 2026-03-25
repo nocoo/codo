@@ -16,6 +16,10 @@ const log = createLogger("llm");
 
 const LLM_TIMEOUT_MS = 30_000;
 
+/** Max completion tokens reserved for LLM response. Used in both API request
+ *  `max_tokens` and the charBudget formula inside `buildSystemPrompt`. */
+export const COMPLETION_TOKEN_RESERVE = 1024;
+
 export interface LLMClient {
   process(event: HookEvent, state: StateStore): Promise<GuardianResult>;
 }
@@ -94,9 +98,10 @@ export function buildSystemPrompt(
   contextLimit: number = 160_000,
 ): string {
   // ~3 chars/token rough estimate; used as soft upper limit only.
+  // Reserve COMPLETION_TOKEN_RESERVE for model output + ~1000 for static prompt overhead.
   // Clamp to [2_000, 600_000] — floor prevents negative/tiny budgets on
   // ultra-small context models, ceiling prevents wasteful over-allocation.
-  const rawBudget = (contextLimit - 2024) * 3;
+  const rawBudget = (contextLimit - COMPLETION_TOKEN_RESERVE - 1000) * 3;
   const charBudget = Math.min(Math.max(rawBudget, 2_000), 600_000);
 
   const parts: string[] = [
@@ -320,6 +325,7 @@ function createOpenAILLMClient(
         const response = await openai.chat.completions.create(
           {
             model: config.model,
+            max_tokens: COMPLETION_TOKEN_RESERVE,
             messages: [
               { role: "system", content: systemPrompt },
               { role: "user", content: userMessage },
@@ -416,7 +422,7 @@ function createAnthropicLLMClient(
         const response = await anthropic.messages.create(
           {
             model: config.model,
-            max_tokens: 1024,
+            max_tokens: COMPLETION_TOKEN_RESERVE,
             system: systemPrompt,
             messages: [
               { role: "user", content: userMessage },

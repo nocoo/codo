@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import {
   TOOLS,
   ANTHROPIC_TOOLS,
+  COMPLETION_TOKEN_RESERVE,
   buildSystemPrompt,
   buildUserMessage,
   createLLMClient,
@@ -50,14 +51,19 @@ function anthropicConfig(
 
 function createMockOpenAI(
   response: Partial<OpenAI.Chat.Completions.ChatCompletion>,
-): OpenAI {
-  return {
+) {
+  let lastCreateArgs: Record<string, unknown> | undefined;
+  const client = {
     chat: {
       completions: {
-        create: async () => response,
+        create: async (args: Record<string, unknown>) => {
+          lastCreateArgs = args;
+          return response;
+        },
       },
     },
   } as unknown as OpenAI;
+  return { client, getLastArgs: () => lastCreateArgs };
 }
 
 function createErrorOpenAI(error: Error): OpenAI {
@@ -74,12 +80,17 @@ function createErrorOpenAI(error: Error): OpenAI {
 
 function createMockAnthropic(
   response: Partial<Anthropic.Message>,
-): Anthropic {
-  return {
+) {
+  let lastCreateArgs: Record<string, unknown> | undefined;
+  const client = {
     messages: {
-      create: async () => response,
+      create: async (args: Record<string, unknown>) => {
+        lastCreateArgs = args;
+        return response;
+      },
     },
   } as unknown as Anthropic;
+  return { client, getLastArgs: () => lastCreateArgs };
 }
 
 function createErrorAnthropic(error: Error): Anthropic {
@@ -226,6 +237,10 @@ describe("TOOLS", () => {
     expect(names).toContain("suppress");
     expect(ANTHROPIC_TOOLS.length).toBe(TOOLS.length);
   });
+
+  test("COMPLETION_TOKEN_RESERVE is 1024", () => {
+    expect(COMPLETION_TOKEN_RESERVE).toBe(1024);
+  });
 });
 
 describe("createLLMClient", () => {
@@ -274,7 +289,7 @@ describe("OpenAI LLM process", () => {
     };
 
     const mockOpenAI = createMockOpenAI(mockResponse);
-    const client = createLLMClient(openaiConfig(), mockOpenAI);
+    const client = createLLMClient(openaiConfig(), mockOpenAI.client);
 
     const state = createStateStore();
     const event = makeEvent({
@@ -317,7 +332,7 @@ describe("OpenAI LLM process", () => {
     };
 
     const mockOpenAI = createMockOpenAI(mockResponse);
-    const client = createLLMClient(openaiConfig(), mockOpenAI);
+    const client = createLLMClient(openaiConfig(), mockOpenAI.client);
 
     const state = createStateStore();
     const event = makeEvent({
@@ -358,6 +373,41 @@ describe("OpenAI LLM process", () => {
     expect(result.action).toBe("suppress");
     expect(result.reason).toContain("LLM error");
   });
+
+  test("request includes max_tokens: COMPLETION_TOKEN_RESERVE", async () => {
+    const mockResponse: Partial<OpenAI.Chat.Completions.ChatCompletion> = {
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          logprobs: null,
+          message: {
+            role: "assistant",
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: "call_mt",
+                type: "function",
+                function: {
+                  name: "suppress",
+                  arguments: JSON.stringify({ reason: "test" }),
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const mock = createMockOpenAI(mockResponse);
+    const client = createLLMClient(openaiConfig(), mock.client);
+    const state = createStateStore();
+    const event = makeEvent({ _hook: "stop", last_assistant_message: "done" });
+
+    await client.process(event, state);
+    expect(mock.getLastArgs()?.max_tokens).toBe(COMPLETION_TOKEN_RESERVE);
+  });
 });
 
 describe("Anthropic LLM process", () => {
@@ -381,7 +431,7 @@ describe("Anthropic LLM process", () => {
     const client = createLLMClient(
       anthropicConfig(),
       undefined,
-      mockAnthropic,
+      mockAnthropic.client,
     );
 
     const state = createStateStore();
@@ -412,7 +462,7 @@ describe("Anthropic LLM process", () => {
     const client = createLLMClient(
       anthropicConfig(),
       undefined,
-      mockAnthropic,
+      mockAnthropic.client,
     );
 
     const state = createStateStore();
@@ -456,7 +506,7 @@ describe("Anthropic LLM process", () => {
     const client = createLLMClient(
       anthropicConfig(),
       undefined,
-      mockAnthropic,
+      mockAnthropic.client,
     );
 
     const state = createStateStore();
@@ -468,6 +518,31 @@ describe("Anthropic LLM process", () => {
     const result = await client.process(event, state);
     expect(result.action).toBe("send");
     expect(result.notification?.title).toBe("Task Complete");
+  });
+
+  test("request includes max_tokens: COMPLETION_TOKEN_RESERVE", async () => {
+    const mockResponse: Partial<Anthropic.Message> = {
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_mt",
+          name: "suppress",
+          input: { reason: "test" },
+        },
+      ],
+    };
+
+    const mock = createMockAnthropic(mockResponse);
+    const client = createLLMClient(
+      anthropicConfig(),
+      undefined,
+      mock.client,
+    );
+    const state = createStateStore();
+    const event = makeEvent({ _hook: "stop", last_assistant_message: "done" });
+
+    await client.process(event, state);
+    expect(mock.getLastArgs()?.max_tokens).toBe(COMPLETION_TOKEN_RESERVE);
   });
 });
 
