@@ -46,7 +46,8 @@ describe("guardian main", () => {
         session_id: "s1",
         hook_event_name: "stop",
         cwd: "/tmp",
-        last_assistant_message: "Done",
+        last_assistant_message:
+          "I have completed the refactoring of the authentication module successfully.",
       }),
       state,
       client,
@@ -73,7 +74,8 @@ describe("guardian main", () => {
         session_id: "s1",
         hook_event_name: "stop",
         cwd: "/tmp",
-        last_assistant_message: "Built everything",
+        last_assistant_message:
+          "Built everything and verified all integration tests are passing correctly.",
       }),
       state,
       client,
@@ -101,14 +103,15 @@ describe("guardian main", () => {
       },
     };
 
-    // Important event (stop) should trigger LLM
+    // Important event (stop with long message) should trigger LLM
     await processLine(
       JSON.stringify({
         _hook: "stop",
         session_id: "s1",
         hook_event_name: "stop",
         cwd: "/tmp",
-        last_assistant_message: "Refactored auth",
+        last_assistant_message:
+          "Refactored the authentication module with new JWT validation logic.",
       }),
       state,
       client,
@@ -171,7 +174,7 @@ describe("guardian main", () => {
       notification: { title: "OK" },
     });
 
-    // Event 1: session-start (contextual, no LLM)
+    // Event 1: session-start (contextual, no LLM, suppressed in fallback)
     await processLine(
       JSON.stringify({
         _hook: "session-start",
@@ -199,14 +202,15 @@ describe("guardian main", () => {
       client,
     );
 
-    // Event 3: stop (triggers LLM)
+    // Event 3: stop with long message (triggers LLM)
     await processLine(
       JSON.stringify({
         _hook: "stop",
         session_id: "s1",
         hook_event_name: "stop",
         cwd: "/tmp/proj",
-        last_assistant_message: "All done",
+        last_assistant_message:
+          "All done, the full test suite passes with 42 tests green.",
       }),
       state,
       client,
@@ -214,9 +218,9 @@ describe("guardian main", () => {
 
     capture.restore();
 
-    // Should have emitted 3 actions:
-    // session-start (fallback: "Session Started") + post-tool-use + stop
-    expect(capture.lines.length).toBe(3);
+    // Should have emitted 2 actions:
+    // session-start (suppressed) + post-tool-use (LLM) + stop (LLM)
+    expect(capture.lines.length).toBe(2);
 
     // State should have accumulated all events
     expect(state.events.length).toBe(3); // start + tool-use + stop
@@ -230,7 +234,8 @@ describe("guardian main", () => {
 
     const client: LLMClient = {
       async process(event): Promise<GuardianResult> {
-        const idx = event._hook === "stop" ? 1 : 2;
+        const msg = event.last_assistant_message as string;
+        const idx = msg.startsWith("First") ? 1 : 2;
         // First event takes longer to process
         if (idx === 1) {
           await new Promise((resolve) => setTimeout(resolve, 50));
@@ -251,7 +256,8 @@ describe("guardian main", () => {
         session_id: "s1",
         hook_event_name: "stop",
         cwd: "/tmp",
-        last_assistant_message: "First",
+        last_assistant_message:
+          "First batch of changes completed including the refactor of the auth module.",
       }),
       state,
       client,
@@ -262,7 +268,8 @@ describe("guardian main", () => {
         session_id: "s1",
         hook_event_name: "stop",
         cwd: "/tmp",
-        last_assistant_message: "Second",
+        last_assistant_message:
+          "Second batch of changes completed with all integration tests passing.",
       }),
       state,
       client,
@@ -294,8 +301,8 @@ describe("guardian main object payloads", () => {
       notification: { title: "Done" },
     });
 
-    // This previously crashed with TypeError: message.trim is not a function
-    // because updateState → isGenericTask called .trim() on an object
+    // Object message is non-string → classifier treats as short → contextual
+    // → fallback → truncate returns undefined → suppressed (no crash)
     await processLine(
       JSON.stringify({
         _hook: "stop",
@@ -309,9 +316,8 @@ describe("guardian main object payloads", () => {
     );
 
     capture.restore();
-    expect(capture.lines.length).toBe(1);
-    const action = JSON.parse(capture.lines[0]);
-    expect(action.action).toBe("send");
+    // Object message → contextual → fallback → empty body → suppressed
+    expect(capture.lines.length).toBe(0);
   });
 
   test("post-tool-use with object tool_response → no crash", async () => {

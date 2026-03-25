@@ -329,15 +329,15 @@ else
     fail "Stop → _hook:stop roundtrip" "exit=$EXIT last='$LAST'"
 fi
 
-# Test: SubagentStop → _hook:"stop" (merged mapping)
+# Test: SubagentStop → _hook:"subagent-stop" (separate from Stop)
 echo '{"hook_event_name":"SubagentStop","session_id":"s1","last_assistant_message":"Sub done"}' \
   | HOME="$FAKE_HOME" bash "$HOOK_SCRIPT" 2>/dev/null
 EXIT=$?
 LAST=$(tail -1 "$MSG_LOG" 2>/dev/null)
-if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"stop"'; then
-    pass "SubagentStop → _hook:stop roundtrip"
+if [ "$EXIT" -eq 0 ] && echo "$LAST" | grep -q '"_hook":"subagent-stop"'; then
+    pass "SubagentStop → _hook:subagent-stop roundtrip"
 else
-    fail "SubagentStop → _hook:stop roundtrip" "exit=$EXIT last='$LAST'"
+    fail "SubagentStop → _hook:subagent-stop roundtrip" "exit=$EXIT last='$LAST'"
 fi
 
 # Test: Notification → _hook:"notification"

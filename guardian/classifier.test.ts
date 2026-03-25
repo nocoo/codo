@@ -65,10 +65,50 @@ describe("classifyBashEvent", () => {
 describe("classifyEvent", () => {
   test("Stop → important, trigger LLM", () => {
     const result = classifyEvent(
-      makeEvent({ _hook: "stop", cwd: "/tmp" }),
+      makeEvent({
+        _hook: "stop",
+        cwd: "/tmp",
+        last_assistant_message: "I have completed the refactoring of the authentication module.",
+      }),
     );
     expect(result.tier).toBe("important");
     expect(result.shouldTriggerLLM).toBe(true);
+  });
+
+  test("Stop with short message → contextual, no LLM", () => {
+    const result = classifyEvent(
+      makeEvent({ _hook: "stop", cwd: "/tmp", last_assistant_message: "Done" }),
+    );
+    expect(result.tier).toBe("contextual");
+    expect(result.shouldTriggerLLM).toBe(false);
+  });
+
+  test("Stop with empty message → contextual, no LLM", () => {
+    const result = classifyEvent(
+      makeEvent({ _hook: "stop", cwd: "/tmp", last_assistant_message: "" }),
+    );
+    expect(result.tier).toBe("contextual");
+    expect(result.shouldTriggerLLM).toBe(false);
+  });
+
+  test("Stop with no message → contextual, no LLM", () => {
+    const result = classifyEvent(
+      makeEvent({ _hook: "stop", cwd: "/tmp" }),
+    );
+    expect(result.tier).toBe("contextual");
+    expect(result.shouldTriggerLLM).toBe(false);
+  });
+
+  test("Stop with object message → contextual, no LLM", () => {
+    const result = classifyEvent(
+      makeEvent({
+        _hook: "stop",
+        cwd: "/tmp",
+        last_assistant_message: { text: "done" },
+      }),
+    );
+    expect(result.tier).toBe("contextual");
+    expect(result.shouldTriggerLLM).toBe(false);
   });
 
   test("Notification → important, trigger LLM", () => {
@@ -100,6 +140,14 @@ describe("classifyEvent", () => {
       makeEvent({ _hook: "session-end", cwd: "/tmp" }),
     );
     expect(result.tier).toBe("contextual");
+    expect(result.shouldTriggerLLM).toBe(false);
+  });
+
+  test("SubagentStop → noise, no LLM", () => {
+    const result = classifyEvent(
+      makeEvent({ _hook: "subagent-stop", cwd: "/tmp" }),
+    );
+    expect(result.tier).toBe("noise");
     expect(result.shouldTriggerLLM).toBe(false);
   });
 

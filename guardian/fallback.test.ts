@@ -119,15 +119,14 @@ describe("fallbackNotification", () => {
     expect(result?.body).toBe("Command failed with exit code 1");
   });
 
-  test("SessionStart with model", () => {
+  test("SessionStart → suppressed", () => {
     const result = fallbackNotification(
       makeEvent({
         _hook: "session-start",
         model: "claude-sonnet-4-6",
       }),
     );
-    expect(result?.title).toBe("Session Started");
-    expect(result?.body).toBe("claude-sonnet-4-6");
+    expect(result).toBeNull();
   });
 
   test("SessionEnd → suppressed", () => {
@@ -139,45 +138,41 @@ describe("fallbackNotification", () => {
 
   // ── truncate hardening: object-typed HookEvent fields ──
 
-  test("Stop with object last_assistant_message → body undefined (not crash)", () => {
+  test("Stop with object last_assistant_message → suppressed (empty body)", () => {
     const result = fallbackNotification(
       makeEvent({
         _hook: "stop",
         last_assistant_message: { text: "done", tokens: 42 },
       }),
     );
-    expect(result?.title).toBe("Task Complete");
-    expect(result?.body).toBeUndefined();
+    expect(result).toBeNull();
   });
 
-  test("Stop with null last_assistant_message → body undefined", () => {
+  test("Stop with null last_assistant_message → suppressed", () => {
     const result = fallbackNotification(
       makeEvent({
         _hook: "stop",
         last_assistant_message: null,
       }),
     );
-    expect(result?.title).toBe("Task Complete");
-    expect(result?.body).toBeUndefined();
+    expect(result).toBeNull();
   });
 
-  test("Stop with undefined last_assistant_message → body undefined", () => {
+  test("Stop with undefined last_assistant_message → suppressed", () => {
     const result = fallbackNotification(
       makeEvent({ _hook: "stop" }),
     );
-    expect(result?.title).toBe("Task Complete");
-    expect(result?.body).toBeUndefined();
+    expect(result).toBeNull();
   });
 
-  test("Stop with numeric last_assistant_message → body undefined", () => {
+  test("Stop with numeric last_assistant_message → suppressed", () => {
     const result = fallbackNotification(
       makeEvent({
         _hook: "stop",
         last_assistant_message: 12345,
       }),
     );
-    expect(result?.title).toBe("Task Complete");
-    expect(result?.body).toBeUndefined();
+    expect(result).toBeNull();
   });
 
   test("PostToolUse with object tool_response → body undefined (not crash)", () => {
