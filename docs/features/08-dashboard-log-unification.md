@@ -154,8 +154,8 @@ CREATE TABLE guardian_decisions (
 CREATE INDEX idx_decisions_project ON guardian_decisions(project_cwd, timestamp);
 
 -- 每日统计快照（按项目聚合，用于 Dashboard StatsCard 快速加载）
--- project_cwd 允许 NULL：无归属项目的直接通知使用哨兵值 '__unattributed__' 聚合
--- 这样 StatsCard "All" 视图 SUM 全表即可得到完整数据，不会遗漏
+-- events.project_cwd 可为 NULL；daily_stats.project_cwd 不可为 NULL
+-- 未归属事件聚合到哨兵值 '__unattributed__'，确保 StatsCard "All" 视图 SUM 完整
 CREATE TABLE daily_stats (
     date            TEXT    NOT NULL,  -- YYYY-MM-DD
     project_cwd     TEXT    NOT NULL,  -- canonical cwd 或 '__unattributed__'
@@ -191,7 +191,7 @@ CREATE TABLE projects (
 
 改动范围：
 - `Sources/CodoCore/CodoMessage.swift` — 新增 `public let cwd: String?`
-- `cli/codo.ts` — 在普通模式下追加 `cwd: process.cwd()` 到 JSON
+- `cli/codo.ts` — 在 `sendToDaemon` 前统一注入 `cwd: getCwd()`（`getCwd()` = `realpathSync(process.cwd())` + fallback）
 - `guardian/types.ts` — `NotificationPayload` 新增可选 `cwd?: string`
 - 对于仍然不带 cwd 的直接通知（旧版 CLI），`project_cwd` 在 SQLite `events` 表中存为 NULL
 
