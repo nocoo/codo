@@ -282,3 +282,90 @@ describe("guardian main", () => {
     expect(order.length).toBe(2);
   });
 });
+
+// ── Object-typed HookEvent fields: end-to-end through processLine ──
+
+describe("guardian main object payloads", () => {
+  test("stop with object last_assistant_message → no crash in updateState", async () => {
+    const state = createStateStore();
+    const capture = captureStdout();
+    const client = createMockLLMClient({
+      action: "send",
+      notification: { title: "Done" },
+    });
+
+    // This previously crashed with TypeError: message.trim is not a function
+    // because updateState → isGenericTask called .trim() on an object
+    await processLine(
+      JSON.stringify({
+        _hook: "stop",
+        session_id: "s1",
+        hook_event_name: "stop",
+        cwd: "/tmp",
+        last_assistant_message: { text: "done", tokens: 42 },
+      }),
+      state,
+      client,
+    );
+
+    capture.restore();
+    expect(capture.lines.length).toBe(1);
+    const action = JSON.parse(capture.lines[0]);
+    expect(action.action).toBe("send");
+  });
+
+  test("post-tool-use with object tool_response → no crash", async () => {
+    const state = createStateStore();
+    const capture = captureStdout();
+    const client = createMockLLMClient({
+      action: "send",
+      notification: { title: "Result" },
+    });
+
+    await processLine(
+      JSON.stringify({
+        _hook: "post-tool-use",
+        session_id: "s1",
+        hook_event_name: "post-tool-use",
+        cwd: "/tmp",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: { stdout: "ok", exitCode: 0 },
+      }),
+      state,
+      client,
+    );
+
+    capture.restore();
+    expect(capture.lines.length).toBe(1);
+    const action = JSON.parse(capture.lines[0]);
+    expect(action.action).toBe("send");
+  });
+
+  test("post-tool-use-failure with object error → no crash", async () => {
+    const state = createStateStore();
+    const capture = captureStdout();
+    const client = createMockLLMClient({
+      action: "send",
+      notification: { title: "Failed" },
+    });
+
+    await processLine(
+      JSON.stringify({
+        _hook: "post-tool-use-failure",
+        session_id: "s1",
+        hook_event_name: "post-tool-use-failure",
+        cwd: "/tmp",
+        tool_name: "Bash",
+        error: { code: "ENOENT", message: "not found" },
+      }),
+      state,
+      client,
+    );
+
+    capture.restore();
+    expect(capture.lines.length).toBe(1);
+    const action = JSON.parse(capture.lines[0]);
+    expect(action.action).toBe("send");
+  });
+});

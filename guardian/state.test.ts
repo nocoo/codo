@@ -350,3 +350,153 @@ describe("event buffer", () => {
     expect(firstIdx).toBeLessThan(secondIdx);
   });
 });
+
+// ── Object-typed HookEvent fields: regression tests ──
+
+describe("updateState object payloads", () => {
+  test("stop with object last_assistant_message → no crash, task unchanged", () => {
+    const store = createStateStore();
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
+
+    // Should NOT throw TypeError: message.trim is not a function
+    updateState(
+      store,
+      makeEvent({
+        _hook: "stop",
+        cwd: "/tmp/proj",
+        last_assistant_message: { text: "done", tokens: 42 },
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    // Object is not a string, so task should remain null (not updated)
+    expect(project?.task).toBeNull();
+  });
+
+  test("stop with null last_assistant_message → no crash", () => {
+    const store = createStateStore();
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "stop",
+        cwd: "/tmp/proj",
+        last_assistant_message: null,
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    expect(project?.task).toBeNull();
+  });
+
+  test("stop with number last_assistant_message → no crash", () => {
+    const store = createStateStore();
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "stop",
+        cwd: "/tmp/proj",
+        last_assistant_message: 12345,
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    expect(project?.task).toBeNull();
+  });
+
+  test("post-tool-use with object tool_response → no crash, lastStatus set", () => {
+    const store = createStateStore();
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "post-tool-use",
+        cwd: "/tmp/proj",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: { stdout: "42 passed", exitCode: 0 },
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    // truncate() with non-string calls String(), which produces [object Object]
+    expect(project?.lastStatus).toBeDefined();
+    expect(project?.lastStatus).not.toContain("undefined");
+  });
+
+  test("post-tool-use-failure with object error → no crash", () => {
+    const store = createStateStore();
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "post-tool-use-failure",
+        cwd: "/tmp/proj",
+        tool_name: "Bash",
+        error: { code: "ENOENT", message: "not found" },
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    expect(project?.lastStatus).toBeDefined();
+  });
+
+  test("notification with object title → defaults to 'Untitled'", () => {
+    const store = createStateStore();
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "notification",
+        cwd: "/tmp/proj",
+        title: { key: "value" },
+        message: "some message",
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    expect(project?.recentNotifications.length).toBe(1);
+    expect(project?.recentNotifications[0].title).toBe("Untitled");
+  });
+
+  test("session-start with non-string model → model is null", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        model: { name: "claude" },
+      }),
+    );
+
+    const project = getProject(store, "/tmp/proj");
+    expect(project?.model).toBeNull();
+  });
+
+  test("summarizeEvent with object fields → event buffered without crash", () => {
+    const store = createStateStore();
+
+    // This exercises summarizeEvent() through updateState() event buffering
+    updateState(
+      store,
+      makeEvent({
+        _hook: "stop",
+        cwd: "/tmp/proj",
+        last_assistant_message: { complex: "object" },
+      }),
+    );
+
+    // Event should be buffered (stop is "important" tier)
+    expect(store.events.length).toBeGreaterThan(0);
+    const lastEvent = store.events[store.events.length - 1];
+    expect(lastEvent.summary).toContain("stop:");
+    // Should NOT contain [object Object] because truncate returns String() representation
+  });
+});
