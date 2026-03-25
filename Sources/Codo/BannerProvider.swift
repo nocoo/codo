@@ -8,6 +8,7 @@ private let logger = Logger(subsystem: "ai.hexly.codo.04", category: "banner")
 /// Replaces UNUserNotificationCenter to avoid system notification grouping/suppression.
 public final class BannerProvider: NotificationProvider, @unchecked Sendable {
     private var currentBanner: BannerWindow?
+    private var pendingMessages: [CodoMessage] = []
 
     public var isAvailable: Bool { true }
 
@@ -24,17 +25,31 @@ public final class BannerProvider: NotificationProvider, @unchecked Sendable {
 
     @MainActor
     private func showBanner(message: CodoMessage) {
-        if let existing = currentBanner {
-            existing.dismissImmediately()
-            currentBanner = nil
+        // If a banner is already showing, queue the new message
+        if currentBanner != nil {
+            pendingMessages.append(message)
+            return
         }
 
+        presentBanner(message: message)
+    }
+
+    @MainActor
+    private func presentBanner(message: CodoMessage) {
         let banner = BannerWindow(message: message)
         currentBanner = banner
         banner.onDismiss = { [weak self] in
             self?.currentBanner = nil
+            self?.showNextIfQueued()
         }
         banner.show()
+    }
+
+    @MainActor
+    private func showNextIfQueued() {
+        guard !pendingMessages.isEmpty else { return }
+        let next = pendingMessages.removeFirst()
+        presentBanner(message: next)
     }
 }
 

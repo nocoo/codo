@@ -98,7 +98,7 @@ final class BannerContentView: NSView {
         iconView.layer?.masksToBounds = true
         addSubview(iconView)
 
-        // ── Right column, row 1: [Badge] [Title] on one line ──
+        // ── Right column, row 1: [Title] [Badge] on one line ──
         let projectName = message.source ?? "Codo"
         let projectBadge = makeProjectBadge(projectName)
         addSubview(projectBadge)
@@ -107,8 +107,8 @@ final class BannerContentView: NSView {
             message.title,
             font: Banner.titleFont,
             color: Banner.titleColor,
-            maxLines: 2,
-            wraps: true
+            maxLines: 1,
+            wraps: false
         )
         addSubview(titleLabel)
 
@@ -185,14 +185,16 @@ final class BannerContentView: NSView {
             iconView.widthAnchor.constraint(equalToConstant: Banner.iconSize),
             iconView.heightAnchor.constraint(equalToConstant: Banner.iconSize),
 
-            // Row 1: [Badge] then [Title] — top-aligned on the same row
-            badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
+            // Row 1: [Title] then [Badge] — title left, badge right
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: rightLeading),
+            titleLabel.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.paddingTop),
+
+            badge.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
             badge.topAnchor.constraint(equalTo: glass.topAnchor, constant: Banner.paddingTop),
 
-            titleLabel.leadingAnchor.constraint(
-                equalTo: badge.trailingAnchor, constant: Banner.badgeTitleGap),
-            titleLabel.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -pad),
-            titleLabel.topAnchor.constraint(equalTo: badge.topAnchor)
+            // Title must not overlap badge — truncate with ellipsis
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: badge.leadingAnchor, constant: -Banner.badgeTitleGap)
         ]
 
         if let bodyLabel {

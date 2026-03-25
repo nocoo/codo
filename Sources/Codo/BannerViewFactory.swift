@@ -56,6 +56,7 @@ func makeProjectBadge(_ name: String) -> NSView {
 
     container.setContentHuggingPriority(.required, for: .horizontal)
     container.setContentHuggingPriority(.required, for: .vertical)
+    container.setContentCompressionResistancePriority(.required, for: .horizontal)
     container.setContentCompressionResistancePriority(.required, for: .vertical)
 
     return container
