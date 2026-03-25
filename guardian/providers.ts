@@ -43,7 +43,7 @@ export const AI_PROVIDERS: Record<
     baseURL: "https://api.minimaxi.com/anthropic",
     sdkType: "anthropic",
     models: ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1"],
-    defaultModel: "MiniMax-M2.7",
+    defaultModel: "MiniMax-M2.1",
   },
   glm: {
     id: "glm",
