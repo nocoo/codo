@@ -1,7 +1,13 @@
 #!/usr/bin/env bun
 
 import { createInterface } from "node:readline";
-import type { GuardianAction, GuardianConfig, HookEvent } from "./types";
+import { realpathSync } from "node:fs";
+import type {
+  GuardianAction,
+  GuardianActionMeta,
+  GuardianConfig,
+  HookEvent,
+} from "./types";
 import { extractCommand } from "./types";
 import { createStateStore, updateState, evictStaleProjects } from "./state";
 import type { StateStore } from "./state";
@@ -53,10 +59,31 @@ function emitAction(action: GuardianAction): void {
   process.stdout.write(`${line}\n`);
 }
 
+/** Safe canonicalize — realpathSync throws if path doesn't exist */
+function safeCanonicalize(cwd: string | undefined): string | undefined {
+  if (!cwd) return undefined;
+  try {
+    return realpathSync(cwd);
+  } catch {
+    return cwd;
+  }
+}
+
+/** Build base meta shared by all emitAction paths */
+function buildBaseMeta(event: HookEvent, tier: string): GuardianActionMeta {
+  return {
+    tier,
+    session_id: event.session_id,
+    cwd: safeCanonicalize(event.cwd),
+    hook_type: event._hook,
+  };
+}
+
 export async function processLine(
   line: string,
   state: StateStore,
   llmClient: LLMClient,
+  modelName?: string,
 ): Promise<void> {
   log.debug("processLine", "recv", { bytes: line.length, preview: line.slice(0, 120) });
 
@@ -76,9 +103,9 @@ export async function processLine(
     const event = parsed as unknown as HookEvent;
     const slog = event.session_id ? log.withSession(event.session_id) : log;
     slog.debug("processLine", "hook event parsed", { hook, cwd: event.cwd });
-    await processHookEvent(event, state, llmClient);
+    await processHookEvent(event, state, llmClient, modelName);
   } else if (parsed.title) {
-    // CodoMessage — forward directly as notification
+    // CodoMessage — forward directly as notification (defensive compatibility path)
     log.info("processLine", "direct CodoMessage", { title: parsed.title as string });
     emitAction({
       action: "send",
@@ -89,7 +116,9 @@ export async function processLine(
         source: parsed.source as string | undefined,
         sound: parsed.sound as string | undefined,
         threadId: parsed.threadId as string | undefined,
+        cwd: safeCanonicalize(parsed.cwd as string | undefined),
       },
+      meta: { cwd: safeCanonicalize(parsed.cwd as string | undefined) },
     });
   } else {
     log.warn("processLine", "unrecognized message format");
@@ -100,6 +129,7 @@ async function processHookEvent(
   event: HookEvent,
   state: StateStore,
   llmClient: LLMClient,
+  modelName?: string,
 ): Promise<void> {
   const slog = event.session_id ? log.withSession(event.session_id) : log;
 
@@ -133,7 +163,16 @@ async function processHookEvent(
     if (result.notification && !result.notification.source && event.cwd) {
       result.notification.source = basename(event.cwd as string);
     }
-    emitAction(result);
+    emitAction({
+      ...result,
+      meta: {
+        ...buildBaseMeta(event, tier),
+        model: modelName,
+        latency_ms: elapsed,
+        prompt_tokens: result.usage?.promptTokens,
+        completion_tokens: result.usage?.completionTokens,
+      },
+    });
   } else {
     // Non-LLM events: use fallback or suppress
     const notification = fallbackNotification(event);
@@ -141,7 +180,11 @@ async function processHookEvent(
       slog.info("processHookEvent", "fallback notification", {
         title: notification.title,
       });
-      emitAction({ action: "send", notification });
+      emitAction({
+        action: "send",
+        notification,
+        meta: buildBaseMeta(event, tier),
+      });
     } else {
       slog.debug("processHookEvent", "silent accumulation", {
         hook: event._hook,
@@ -181,7 +224,7 @@ if (import.meta.main) {
 
   rl.on("line", (line: string) => {
     if (!line.trim()) return;
-    queue = queue.then(() => processLine(line, state, llmClient)).catch(
+    queue = queue.then(() => processLine(line, state, llmClient, config.model)).catch(
       (err) => {
         log.error("queue", "unhandled error", {
           error: err instanceof Error ? err.message : String(err),

@@ -1,15 +1,43 @@
 import Foundation
 
+/// Metadata attached to a Guardian action for decision context.
+public struct GuardianActionMeta: Codable, Sendable {
+    public let tier: String?
+    public let model: String?
+    public let promptTokens: Int?
+    public let completionTokens: Int?
+    public let latencyMs: Int?
+    public let sessionId: String?
+    public let cwd: String?
+    public let hookType: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case tier, model, cwd
+        case promptTokens = "prompt_tokens"
+        case completionTokens = "completion_tokens"
+        case latencyMs = "latency_ms"
+        case sessionId = "session_id"
+        case hookType = "hook_type"
+    }
+}
+
 /// A notification action emitted by the Guardian on stdout.
 public struct GuardianAction: Codable, Sendable {
     public let action: String  // "send" or "suppress"
     public let notification: CodoMessage?  // present when action == "send"
     public let reason: String?             // present when action == "suppress"
+    public let meta: GuardianActionMeta?   // decision context (optional, backward compat)
 
-    public init(action: String, notification: CodoMessage? = nil, reason: String? = nil) {
+    public init(
+        action: String,
+        notification: CodoMessage? = nil,
+        reason: String? = nil,
+        meta: GuardianActionMeta? = nil
+    ) {
         self.action = action
         self.notification = notification
         self.reason = reason
+        self.meta = meta
     }
 }
 

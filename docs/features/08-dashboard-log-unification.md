@@ -461,7 +461,7 @@ public struct ProjectRecord: Codable, Sendable {
 
 ---
 
-### Phase 2: 扩展现有 GuardianAction 协议
+### Phase 2: 扩展现有 GuardianAction 协议 ✅ DONE
 
 当前 `GuardianAction` 在两侧的定义：
 

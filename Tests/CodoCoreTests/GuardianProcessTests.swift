@@ -95,6 +95,7 @@ struct GuardianActionTests {
         #expect(action.notification?.title == "Build Done")
         #expect(action.notification?.body == "OK")
         #expect(action.reason == nil)
+        #expect(action.meta == nil)
     }
 
     @Test("decode suppress action with reason")
@@ -106,6 +107,61 @@ struct GuardianActionTests {
         #expect(action.action == "suppress")
         #expect(action.notification == nil)
         #expect(action.reason == "duplicate within 30s")
+        #expect(action.meta == nil)
+    }
+
+    @Test("decode action with meta")
+    func decodeActionWithMeta() throws {
+        let json = """
+        {
+            "action": "send",
+            "notification": {"title": "Done"},
+            "meta": {
+                "tier": "important",
+                "model": "claude-sonnet",
+                "prompt_tokens": 500,
+                "completion_tokens": 100,
+                "latency_ms": 1200,
+                "session_id": "s1",
+                "cwd": "/tmp/project",
+                "hook_type": "stop"
+            }
+        }
+        """
+        let action = try JSONDecoder().decode(GuardianAction.self, from: Data(json.utf8))
+        #expect(action.action == "send")
+        #expect(action.notification?.title == "Done")
+        #expect(action.meta != nil)
+        #expect(action.meta?.tier == "important")
+        #expect(action.meta?.model == "claude-sonnet")
+        #expect(action.meta?.promptTokens == 500)
+        #expect(action.meta?.completionTokens == 100)
+        #expect(action.meta?.latencyMs == 1200)
+        #expect(action.meta?.sessionId == "s1")
+        #expect(action.meta?.cwd == "/tmp/project")
+        #expect(action.meta?.hookType == "stop")
+    }
+
+    @Test("decode action with partial meta (backward compat)")
+    func decodeActionWithPartialMeta() throws {
+        let json = """
+        {"action":"suppress","reason":"noise","meta":{"tier":"contextual"}}
+        """
+        let action = try JSONDecoder().decode(GuardianAction.self, from: Data(json.utf8))
+        #expect(action.action == "suppress")
+        #expect(action.meta?.tier == "contextual")
+        #expect(action.meta?.model == nil)
+        #expect(action.meta?.promptTokens == nil)
+    }
+
+    @Test("backward compat: old JSON without meta decodes fine")
+    func decodeOldJsonWithoutMeta() throws {
+        let json = """
+        {"action":"send","notification":{"title":"T","body":"B"}}
+        """
+        let action = try JSONDecoder().decode(GuardianAction.self, from: Data(json.utf8))
+        #expect(action.action == "send")
+        #expect(action.meta == nil)
     }
 
     @Test("encode roundtrip")

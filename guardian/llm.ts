@@ -355,7 +355,12 @@ function createOpenAILLMClient(
             name: tc.function.name,
             args: tc.function.arguments.slice(0, 200),
           });
-          return parseOpenAIToolCall(tc);
+          const result = parseOpenAIToolCall(tc);
+          result.usage = {
+            promptTokens: response.usage?.prompt_tokens,
+            completionTokens: response.usage?.completion_tokens,
+          };
+          return result;
         }
 
         log.warn("openai.notool", "no tool call in response", {
@@ -454,7 +459,12 @@ function createAnthropicLLMClient(
             name: toolUse.name,
             args: JSON.stringify(toolUse.input).slice(0, 200),
           });
-          return parseAnthropicToolUse(toolUse);
+          const result = parseAnthropicToolUse(toolUse);
+          result.usage = {
+            promptTokens: response.usage?.input_tokens,
+            completionTokens: response.usage?.output_tokens,
+          };
+          return result;
         }
 
         log.warn("anthropic.notool", "no tool_use block found, falling back", {

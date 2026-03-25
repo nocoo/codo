@@ -3,16 +3,32 @@
 // Daemon → Guardian (stdin): raw hook JSON (with _hook field) or CodoMessage
 // Guardian → Daemon (stdout): GuardianAction JSON line
 
+export interface GuardianActionMeta {
+  tier?: string;              // classification tier
+  model?: string;             // LLM model used
+  prompt_tokens?: number;     // OpenAI: prompt_tokens, Anthropic: input_tokens
+  completion_tokens?: number; // OpenAI: completion_tokens, Anthropic: output_tokens
+  latency_ms?: number;        // LLM round-trip time
+  session_id?: string;
+  cwd?: string;               // canonical cwd
+  hook_type?: string;         // triggering hook type
+}
+
 export interface GuardianAction {
   action: "send" | "suppress";
   notification?: NotificationPayload;
   reason?: string;
+  meta?: GuardianActionMeta;
 }
 
 export interface GuardianResult {
   action: "send" | "suppress";
   notification?: NotificationPayload;
   reason?: string;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+  };
 }
 
 export interface NotificationPayload {
