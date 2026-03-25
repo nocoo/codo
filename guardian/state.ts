@@ -247,31 +247,110 @@ export function evictStaleProjects(
 
 export function serializeForPrompt(
   store: StateStore,
-  maxEvents: number = MAX_EVENTS,
+  charBudget: number = 600_000,
 ): string {
+  let remaining = charBudget;
   const parts: string[] = [];
 
-  // Projects
+  // ── Step 1: Active Projects summary ──
   if (store.projects.size > 0) {
-    parts.push("## Active Projects\n");
-    for (const [, project] of store.projects) {
-      parts.push(
-        `- **${project.cwd}** (session: ${project.sessionActive ? "active" : "inactive"})`,
-      );
-      if (project.task) parts.push(`  Task: ${project.task}`);
-      if (project.model) parts.push(`  Model: ${project.model}`);
+    const projectLines: string[] = ["## Active Projects\n"];
+    // Sort by lastEventTime desc so tight budgets keep the most recent projects
+    const sortedProjects = [...store.projects.values()].sort(
+      (a, b) => b.lastEventTime - a.lastEventTime,
+    );
+    for (const project of sortedProjects) {
+      const line = `- **${project.cwd}** (session: ${project.sessionActive ? "active" : "inactive"})`;
+      const extras: string[] = [];
+      if (project.task) extras.push(`  Task: ${project.task}`);
+      if (project.model) extras.push(`  Model: ${project.model}`);
       if (project.lastStatus)
-        parts.push(`  Last status: ${project.lastStatus}`);
+        extras.push(`  Last status: ${project.lastStatus}`);
+
+      const chunk = [line, ...extras].join("\n");
+      if (chunk.length > remaining) break;
+      projectLines.push(chunk);
+      remaining -= chunk.length;
+    }
+    if (projectLines.length > 1) {
+      parts.push(projectLines.join("\n"));
     }
   }
 
-  // Events
-  const recentEvents = store.events.slice(-maxEvents);
-  if (recentEvents.length > 0) {
-    parts.push("\n## Recent Events\n");
-    for (const event of recentEvents) {
-      const time = new Date(event.timestamp).toISOString();
-      parts.push(`- [${time}] ${event.summary}`);
+  // ── Step 2: Notification history (priority reserve) ──
+  // For each active project, render most recent 3 notifications BEFORE event selection
+  // to guarantee de-duplication context is always available
+  const notifByProject = new Map<string, string[]>();
+  for (const [, project] of store.projects) {
+    const notifs = project.recentNotifications.slice(-3);
+    if (notifs.length === 0) continue;
+
+    const lines: string[] = [];
+    for (const n of notifs) {
+      const time = new Date(n.time).toISOString();
+      const bodyPart = n.body ? ` — ${n.body}` : "";
+      lines.push(`- [${time}] ${n.title}${bodyPart}`);
+    }
+    const chunk = lines.join("\n");
+    if (chunk.length <= remaining) {
+      notifByProject.set(project.cwd, lines);
+      remaining -= chunk.length;
+    }
+  }
+
+  // ── Step 3: Event selection — per-event from newest to oldest ──
+  const selectedIndices: number[] = [];
+  for (let i = store.events.length - 1; i >= 0; i--) {
+    const event = store.events[i];
+    const time = new Date(event.timestamp).toISOString();
+    const line = `- [${time}] ${event.summary}`;
+    if (line.length > remaining) break;
+    selectedIndices.push(i);
+    remaining -= line.length;
+  }
+  // Reverse to chronological order
+  selectedIndices.reverse();
+
+  // ── Step 4: Render — group selected events by cwd ──
+  // Collect all cwds that have events or notifications
+  const eventsByCwd = new Map<string, BufferedEvent[]>();
+  for (const idx of selectedIndices) {
+    const event = store.events[idx];
+    const key = event.cwd ?? "unknown";
+    let list = eventsByCwd.get(key);
+    if (!list) {
+      list = [];
+      eventsByCwd.set(key, list);
+    }
+    list.push(event);
+  }
+
+  // Merge notification cwds into the rendering set
+  const allCwds = new Set([...eventsByCwd.keys(), ...notifByProject.keys()]);
+
+  if (allCwds.size > 0) {
+    parts.push("\n## Event History\n");
+    for (const cwd of allCwds) {
+      parts.push(`### ${cwd}\n`);
+
+      // Sent notifications for this project
+      const notifLines = notifByProject.get(cwd);
+      if (notifLines && notifLines.length > 0) {
+        parts.push("#### Sent Notifications");
+        parts.push(...notifLines);
+        parts.push("");
+      }
+
+      // Event timeline
+      const events = eventsByCwd.get(cwd);
+      if (events && events.length > 0) {
+        parts.push("#### Event Timeline");
+        for (const event of events) {
+          const time = new Date(event.timestamp).toISOString();
+          parts.push(`- [${time}] ${event.summary}`);
+        }
+        parts.push("");
+      }
     }
   }
 

@@ -284,7 +284,7 @@ describe("serializeForPrompt", () => {
     expect(result).toContain("Active Projects");
     expect(result).toContain("/tmp/proj-a");
     expect(result).toContain("/tmp/proj-b");
-    expect(result).toContain("Recent Events");
+    expect(result).toContain("Event History");
   });
 });
 
@@ -831,5 +831,270 @@ describe("summarizeEvent expanded truncation", () => {
     );
     expect(toolEvent?.summary).toContain("→");
     expect(toolEvent?.summary).toContain("42 tests passed");
+  });
+});
+
+// ── Commit 2: Serialization with charBudget, notification history, project grouping ──
+
+describe("serializeForPrompt charBudget", () => {
+  test("charBudget truncation: small budget excludes oldest events", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-budget",
+      }),
+    );
+
+    // Push 100 important events with sizeable summaries
+    for (let i = 0; i < 100; i++) {
+      updateState(
+        store,
+        makeEvent({
+          _hook: "post-tool-use",
+          cwd: "/tmp/proj",
+          session_id: "s-budget",
+          tool_name: "Bash",
+          command: `npm test run-${"x".repeat(50)}-${i}`,
+          tool_response: `PASS ${"y".repeat(100)}-result-${i}`,
+        }),
+      );
+    }
+
+    // Serialize with moderate budget — should include only recent events
+    const result = serializeForPrompt(store, 15000);
+    // Most recent event should be present
+    expect(result).toContain("result-99");
+    // Oldest events should be excluded (budget too small for all 100)
+    expect(result).not.toContain("result-0 ");
+  });
+
+  test("large budget includes all events", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-large",
+      }),
+    );
+
+    for (let i = 0; i < 10; i++) {
+      updateState(
+        store,
+        makeEvent({
+          _hook: "post-tool-use",
+          cwd: "/tmp/proj",
+          session_id: "s-large",
+          tool_name: "Bash",
+          command: `npm test suite-${i}`,
+          tool_response: `pass-${i}`,
+        }),
+      );
+    }
+
+    const result = serializeForPrompt(store, 600_000);
+    // All events should be present
+    for (let i = 0; i < 10; i++) {
+      expect(result).toContain(`suite-${i}`);
+    }
+  });
+});
+
+describe("serializeForPrompt notification history", () => {
+  test("notification history appears in output", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-notif",
+      }),
+    );
+
+    // Send a notification with title + body
+    updateState(
+      store,
+      makeEvent({
+        _hook: "notification",
+        cwd: "/tmp/proj",
+        session_id: "s-notif",
+        title: "Tests passed",
+        message: "All 42 tests passed with 95% coverage",
+      }),
+    );
+
+    const result = serializeForPrompt(store);
+    expect(result).toContain("Sent Notifications");
+    expect(result).toContain("Tests passed");
+    expect(result).toContain("All 42 tests passed");
+  });
+
+  test("notification history capped at 3 most recent per project", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-cap",
+      }),
+    );
+
+    // Push 5 notifications
+    for (let i = 0; i < 5; i++) {
+      updateState(
+        store,
+        makeEvent({
+          _hook: "notification",
+          cwd: "/tmp/proj",
+          session_id: "s-cap",
+          title: `Notif-${i}`,
+          message: `Body-${i}`,
+        }),
+      );
+    }
+
+    const result = serializeForPrompt(store);
+    // Extract just the Sent Notifications section
+    const sentNotifMatch = result.match(
+      /#### Sent Notifications\n([\s\S]*?)(?=\n####|\n###|\n##|$)/,
+    );
+    expect(sentNotifMatch).toBeTruthy();
+    const sentSection = sentNotifMatch![1];
+    // Only the last 3 should appear in Sent Notifications
+    expect(sentSection).not.toContain("Notif-0");
+    expect(sentSection).not.toContain("Notif-1");
+    expect(sentSection).toContain("Notif-2");
+    expect(sentSection).toContain("Notif-3");
+    expect(sentSection).toContain("Notif-4");
+  });
+
+  test("notification history rendered before events (priority reserve)", () => {
+    const store = createStateStore();
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-prio",
+      }),
+    );
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "notification",
+        cwd: "/tmp/proj",
+        session_id: "s-prio",
+        title: "Priority notification",
+        message: "This should appear even with tiny budget",
+      }),
+    );
+
+    // Push some tool events
+    for (let i = 0; i < 5; i++) {
+      updateState(
+        store,
+        makeEvent({
+          _hook: "post-tool-use",
+          cwd: "/tmp/proj",
+          session_id: "s-prio",
+          tool_name: "Bash",
+          command: `cmd-${i}`,
+          tool_response: `res-${i}`,
+        }),
+      );
+    }
+
+    // Even with moderate budget, notification should be present
+    const result = serializeForPrompt(store, 3000);
+    expect(result).toContain("Sent Notifications");
+    expect(result).toContain("Priority notification");
+  });
+});
+
+describe("serializeForPrompt project grouping", () => {
+  test("events grouped by project cwd", () => {
+    const store = createStateStore();
+
+    // Two different projects
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj-a",
+        session_id: "sa",
+      }),
+    );
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj-b",
+        session_id: "sb",
+      }),
+    );
+
+    updateState(
+      store,
+      makeEvent({
+        _hook: "post-tool-use",
+        cwd: "/tmp/proj-a",
+        session_id: "sa",
+        tool_name: "Bash",
+        command: "npm test",
+        tool_response: "proj-a-result",
+      }),
+    );
+    updateState(
+      store,
+      makeEvent({
+        _hook: "post-tool-use",
+        cwd: "/tmp/proj-b",
+        session_id: "sb",
+        tool_name: "Bash",
+        command: "cargo test",
+        tool_response: "proj-b-result",
+      }),
+    );
+
+    const result = serializeForPrompt(store);
+    // Should have project-level headings
+    expect(result).toContain("### " + canonicalizePath("/tmp/proj-a"));
+    expect(result).toContain("### " + canonicalizePath("/tmp/proj-b"));
+    expect(result).toContain("Event Timeline");
+  });
+
+  test("events without cwd grouped under 'unknown'", () => {
+    const store = createStateStore();
+
+    // session-start sets up sessionToCwd
+    updateState(
+      store,
+      makeEvent({
+        _hook: "session-start",
+        cwd: "/tmp/proj",
+        session_id: "s-unk",
+      }),
+    );
+
+    // An event from an unknown session (no cwd, no sessionToCwd entry)
+    const buffered: import("./state").BufferedEvent = {
+      timestamp: Date.now(),
+      hookType: "stop" as import("./types").HookEventName,
+      sessionId: "unknown-session",
+      cwd: undefined,
+      summary: "stop: orphan event",
+      raw: {},
+    };
+    store.events.push(buffered);
+
+    const result = serializeForPrompt(store);
+    expect(result).toContain("### unknown");
   });
 });

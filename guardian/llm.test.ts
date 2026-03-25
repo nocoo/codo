@@ -130,7 +130,7 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("send_notification");
     expect(prompt).toContain("suppress");
     expect(prompt).toContain("Active Projects");
-    expect(prompt).toContain("Recent Events");
+    expect(prompt).toContain("Event History");
   });
 
   test("empty state has role and tools only", () => {
