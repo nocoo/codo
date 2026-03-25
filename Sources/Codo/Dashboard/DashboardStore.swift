@@ -82,7 +82,10 @@ final class DashboardStore {
 
     /// Process an incoming hook event from AppDelegate.
     func ingestHookEvent(_ event: HookEvent) {
-        var projectName = event.cwd.map {
+        // Canonicalize cwd for consistent project identification
+        let canonicalCwd = event.cwd.map { canonicalizeCwd($0) }
+
+        var projectName = canonicalCwd.map {
             URL(fileURLWithPath: $0).lastPathComponent
         }
 
@@ -90,7 +93,7 @@ final class DashboardStore {
         if let sessionId = event.sessionId {
             switch event.hook {
             case "session-start":
-                if let cwd = event.cwd {
+                if let cwd = canonicalCwd {
                     let session = SessionInfo(
                         id: sessionId,
                         cwd: cwd,
@@ -114,7 +117,7 @@ final class DashboardStore {
 
             default:
                 // For other hooks, update project lastSeen if cwd available
-                if let cwd = event.cwd {
+                if let cwd = canonicalCwd {
                     discoverProject(cwd: cwd)
                 }
             }
@@ -123,8 +126,18 @@ final class DashboardStore {
         // Build event summary
         let summary = buildSummary(for: event)
 
+        // Resolve projectCwd: prefer canonicalCwd, fall back to active session lookup
+        let resolvedCwd = canonicalCwd ?? {
+            if let sessionId = event.sessionId,
+               let existing = activeSessions.first(where: { $0.id == sessionId }) {
+                return existing.cwd
+            }
+            return nil
+        }()
+
         let entry = EventEntry(
             hookType: event.hook,
+            projectCwd: resolvedCwd,
             projectName: projectName,
             summary: summary
         )
@@ -162,15 +175,17 @@ final class DashboardStore {
     }
 
     private func discoverProject(cwd: String) {
-        if let idx = projects.firstIndex(where: { $0.id == cwd }) {
+        let canonical = canonicalizeCwd(cwd)
+        if let idx = projects.firstIndex(where: { $0.id == canonical }) {
             projects[idx].lastSeen = Date()
         } else {
-            projects.append(ProjectInfo(cwd: cwd))
+            projects.append(ProjectInfo(cwd: canonical))
         }
     }
 
     private func updateProjectLastSeen(cwd: String) {
-        if let idx = projects.firstIndex(where: { $0.id == cwd }) {
+        let canonical = canonicalizeCwd(cwd)
+        if let idx = projects.firstIndex(where: { $0.id == canonical }) {
             projects[idx].lastSeen = Date()
         }
     }

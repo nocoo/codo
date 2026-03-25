@@ -3,10 +3,34 @@ import {
   TEMPLATES,
   VALID_HOOK_TYPES,
   applyTemplate,
+  getCwd,
   parseArgs,
   parseHook,
   parseStdin,
 } from "./codo.ts";
+
+// MARK: - getCwd
+
+describe("getCwd", () => {
+  test("returns a string", () => {
+    const result = getCwd();
+    expect(typeof result).toBe("string");
+  });
+
+  test("returns an absolute path", () => {
+    const result = getCwd();
+    expect(result).toBeDefined();
+    expect(result!.startsWith("/")).toBe(true);
+  });
+
+  test("returns canonical path (idempotent with realpathSync)", () => {
+    const { realpathSync } = require("node:fs");
+    const result = getCwd();
+    expect(result).toBeDefined();
+    // Applying realpathSync again should not change the result
+    expect(realpathSync(result!)).toBe(result);
+  });
+});
 
 // MARK: - parseArgs
 

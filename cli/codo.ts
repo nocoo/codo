@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -19,6 +19,20 @@ export interface CodoMessage {
 interface CodoResponse {
   ok: boolean;
   error?: string;
+}
+
+// --- cwd resolution ---
+
+/**
+ * Get canonical cwd using realpathSync (consistent with guardian/state.ts canonicalizePath).
+ * Falls back to raw process.cwd() if realpathSync fails, or undefined if cwd is unavailable.
+ */
+export function getCwd(): string | undefined {
+  try {
+    return realpathSync(process.cwd());
+  } catch {
+    try { return process.cwd(); } catch { return undefined; }
+  }
 }
 
 // --- Hook Types ---
@@ -445,7 +459,9 @@ async function main(): Promise<void> {
   }
 
   try {
-    const response = await sendToDaemon(message);
+    // Inject canonical cwd for project attribution (covers both args and stdin paths)
+    const payload: Record<string, unknown> = { ...message, cwd: getCwd() };
+    const response = await sendToDaemon(payload);
     if (!response.ok) {
       console.error(response.error || "unknown error");
       process.exit(1);

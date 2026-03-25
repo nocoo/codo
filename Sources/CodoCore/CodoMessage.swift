@@ -8,6 +8,7 @@ public struct CodoMessage: Codable, Sendable {
     public let source: String?      // project name (basename of cwd)
     public let sound: String?
     public let threadId: String?
+    public let cwd: String?         // canonical cwd for project attribution
 
     public init(
         title: String,
@@ -15,7 +16,8 @@ public struct CodoMessage: Codable, Sendable {
         subtitle: String? = nil,
         source: String? = nil,
         sound: String? = nil,
-        threadId: String? = nil
+        threadId: String? = nil,
+        cwd: String? = nil
     ) {
         self.title = title
         self.body = body
@@ -23,6 +25,7 @@ public struct CodoMessage: Codable, Sendable {
         self.source = source
         self.sound = sound
         self.threadId = threadId
+        self.cwd = cwd
     }
 
     /// Returns the effective sound setting, defaulting to "default" when nil.

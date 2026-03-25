@@ -22,6 +22,7 @@ export interface NotificationPayload {
   source?: string;       // project name (basename of cwd)
   sound?: string;
   threadId?: string;
+  cwd?: string;          // canonical cwd for project attribution
 }
 
 export type HookEventName =

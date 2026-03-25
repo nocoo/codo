@@ -273,7 +273,7 @@ public func canonicalizeCwd(_ path: String) -> String {
 
 ## Implementation Phases
 
-### Phase 0: 数据模型修正（前置依赖）
+### Phase 0: 数据模型修正（前置依赖） ✅ DONE
 
 在做任何持久化或过滤之前，先补齐数据模型的缺失字段。
 

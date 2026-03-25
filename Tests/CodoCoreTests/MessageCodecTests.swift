@@ -109,6 +109,28 @@ struct CodoMessageDecodeTests {
         let msg = try decoder.decode(CodoMessage.self, from: Data(json.utf8))
         #expect(msg.subtitle == nil)
         #expect(msg.threadId == nil)
+        #expect(msg.cwd == nil)
+    }
+
+    @Test func decodeWithCwd() throws {
+        let json = #"{"title":"T","cwd":"/Users/test/project"}"#
+        let msg = try decoder.decode(CodoMessage.self, from: Data(json.utf8))
+        #expect(msg.title == "T")
+        #expect(msg.cwd == "/Users/test/project")
+    }
+
+    @Test func encodeWithCwd() throws {
+        let msg = CodoMessage(title: "T", cwd: "/Users/test/project")
+        let data = try JSONEncoder().encode(msg)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(obj?["title"] as? String == "T")
+        #expect(obj?["cwd"] as? String == "/Users/test/project")
+    }
+
+    @Test func decodeWithoutCwdDefaultsToNil() throws {
+        let json = #"{"title":"T","body":"B"}"#
+        let msg = try decoder.decode(CodoMessage.self, from: Data(json.utf8))
+        #expect(msg.cwd == nil)
     }
 }
 
