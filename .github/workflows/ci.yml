@@ -25,3 +25,7 @@ jobs:
         run: cd guardian && bun install
       - name: Test Guardian
         run: cd guardian && bun test
+      - name: Lint CLI
+        run: cd cli && bunx biome check --error-on-warnings .
+      - name: Lint Guardian
+        run: cd guardian && bunx biome check --error-on-warnings .
