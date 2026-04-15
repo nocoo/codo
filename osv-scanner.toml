@@ -1,0 +1,11 @@
+# OSV-Scanner configuration for Codo
+# https://google.github.io/osv-scanner/
+
+[[PackageLockfileConfig]]
+  Lockfile = "cli/bun.lock"
+
+[[PackageLockfileConfig]]
+  Lockfile = "guardian/bun.lock"
+
+[[PackageLockfileConfig]]
+  Lockfile = "Package.resolved"
