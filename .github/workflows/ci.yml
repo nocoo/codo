@@ -10,8 +10,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Swift Test
-        run: swift test
+      - name: Swift Test with Coverage
+        run: swift test --enable-code-coverage
   quality:
     runs-on: ubuntu-latest
     steps:
