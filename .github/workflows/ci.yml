@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  swift-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift Test
+        run: swift test
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install CLI deps
+        run: cd cli && bun install
+      - name: Test CLI
+        run: cd cli && bun test
+      - name: Install Guardian deps
+        run: cd guardian && bun install
+      - name: Test Guardian
+        run: cd guardian && bun test
