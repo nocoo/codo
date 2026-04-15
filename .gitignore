@@ -7,4 +7,5 @@ DerivedData/
 Package.resolved
 node_modules/
 bun.lock
+!guardian/bun.lock
 .superset/

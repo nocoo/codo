@@ -1,0 +1,14 @@
+# Gitleaks configuration for Codo
+# https://github.com/gitleaks/gitleaks
+
+title = "Codo Gitleaks Config"
+
+[allowlist]
+  description = "Global allowlist"
+  paths = [
+    '''(^|/)\.build/''',
+    '''(^|/)node_modules/''',
+    '''(^|/)bun\.lock$''',
+    '''\.png$''',
+    '''\.icns$''',
+  ]

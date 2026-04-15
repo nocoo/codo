@@ -1,0 +1,45 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  swift-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift Test with Coverage
+        run: swift test --enable-code-coverage
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install CLI deps
+        run: cd cli && bun install
+      - name: Test CLI
+        run: cd cli && bun test
+      - name: Install Guardian deps
+        run: cd guardian && bun install
+      - name: Test Guardian
+        run: cd guardian && bun test
+      - name: Lint CLI
+        run: cd cli && bunx biome check --error-on-warnings .
+      - name: Lint Guardian
+        run: cd guardian && bunx biome check --error-on-warnings .
+      - name: Gitleaks
+        run: |
+          GITLEAKS_VERSION="8.22.1"
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks detect --config .gitleaks.toml --source . -v --no-banner
+      - name: OSV-Scanner
+        run: |
+          OSV_VERSION="2.3.5"
+          curl -sSfL -o /usr/local/bin/osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner scan --lockfile=cli/bun.lock --lockfile=guardian/bun.lock --config=osv-scanner.toml || true

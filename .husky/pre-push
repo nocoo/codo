@@ -14,8 +14,8 @@ echo "=== L2: Swift Lint ==="
 swiftlint lint --strict --quiet
 
 echo "=== L2: TS Lint ==="
-cd cli && bunx biome check . && cd ..
-cd guardian && bunx biome check . && cd ..
+cd cli && bunx biome check --error-on-warnings . && cd ..
+cd guardian && bunx biome check --error-on-warnings . && cd ..
 
 echo "=== L3: Integration Tests ==="
 if [ -f scripts/integration-test.sh ]; then
