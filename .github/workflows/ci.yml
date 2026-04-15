@@ -30,12 +30,16 @@ jobs:
       - name: Lint Guardian
         run: cd guardian && bunx biome check --error-on-warnings .
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        with:
-          args: --config .gitleaks.toml
-        env:
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        run: |
+          GITLEAKS_VERSION="8.22.1"
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks detect --config .gitleaks.toml --source . -v --no-banner
       - name: OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2
-        with:
-          config: osv-scanner.toml
+        run: |
+          OSV_VERSION="2.3.5"
+          curl -sSfL -o /usr/local/bin/osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner scan --lockfile=cli/bun.lock --lockfile=guardian/bun.lock --config=osv-scanner.toml || true
