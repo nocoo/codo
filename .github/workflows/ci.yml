@@ -29,3 +29,13 @@ jobs:
         run: cd cli && bunx biome check --error-on-warnings .
       - name: Lint Guardian
         run: cd guardian && bunx biome check --error-on-warnings .
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: --config .gitleaks.toml
+        env:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      - name: OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v2
+        with:
+          config: osv-scanner.toml
