@@ -18,11 +18,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - name: Install CLI deps
-        run: cd cli && bun install
+        run: cd cli && bun install --ignore-scripts
       - name: Test CLI
         run: cd cli && bun test
       - name: Install Guardian deps
-        run: cd guardian && bun install
+        run: cd guardian && bun install --ignore-scripts
       - name: Test Guardian
         run: cd guardian && bun test
       - name: Lint CLI
