@@ -408,6 +408,39 @@ describe("OpenAI LLM process", () => {
     await client.process(event, state);
     expect(mock.getLastArgs()?.max_tokens).toBe(COMPLETION_TOKEN_RESERVE);
   });
+
+  test("non-function tool call is suppressed", async () => {
+    const mockResponse: Partial<OpenAI.Chat.Completions.ChatCompletion> = {
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          logprobs: null,
+          message: {
+            role: "assistant",
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: "call_custom",
+                type: "custom",
+                custom: { name: "some_custom_tool", input: "{}" },
+              } as unknown as OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
+            ],
+          },
+        },
+      ],
+    };
+
+    const mock = createMockOpenAI(mockResponse);
+    const client = createLLMClient(openaiConfig(), mock.client);
+    const state = createStateStore();
+    const event = makeEvent({ _hook: "stop", last_assistant_message: "done" });
+
+    const result = await client.process(event, state);
+    expect(result.action).toBe("suppress");
+    expect(result.reason).toContain("unsupported tool call type");
+  });
 });
 
 describe("Anthropic LLM process", () => {

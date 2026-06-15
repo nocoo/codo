@@ -6,6 +6,6 @@
   "private": true,
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
-    "openai": "^4.70.0"
+    "openai": "^6.39.0"
   }
 }

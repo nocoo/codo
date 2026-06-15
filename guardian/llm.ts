@@ -26,7 +26,7 @@ export interface LLMClient {
 
 // ── Tool definitions (OpenAI format, also used as reference for Anthropic) ──
 
-export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+export const TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[] = [
   {
     type: "function",
     function: {
@@ -220,6 +220,13 @@ export function buildUserMessage(event: HookEvent): string {
 function parseOpenAIToolCall(
   toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
 ): GuardianResult {
+  if (toolCall.type !== "function") {
+    return {
+      action: "suppress",
+      reason: `unsupported tool call type: ${toolCall.type}`,
+    };
+  }
+
   const args = JSON.parse(toolCall.function.arguments) as Record<
     string,
     unknown
@@ -352,8 +359,12 @@ function createOpenAILLMClient(
         if (toolCalls && toolCalls.length > 0) {
           const tc = toolCalls[0];
           log.debug("openai.tool", "tool call parsed", {
-            name: tc.function.name,
-            args: tc.function.arguments.slice(0, 200),
+            type: tc.type,
+            name: tc.type === "function" ? tc.function.name : "(custom)",
+            args:
+              tc.type === "function"
+                ? tc.function.arguments.slice(0, 200)
+                : "",
           });
           const result = parseOpenAIToolCall(tc);
           result.usage = {
