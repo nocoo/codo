@@ -1,120 +1,104 @@
-# Codo — macOS Notification Guardian
+# Codo
 
-## Architecture
+macOS menubar notification daemon for Claude Code hooks: Swift `Codo.app` + Bun CLI + Guardian subprocess.
+Profile: native-hybrid
+Direction: [docs/architecture/01-system-design.md](docs/architecture/01-system-design.md). Frameworks must not rewrite this file.
+
+## Sources of Truth
+
+This file is the **contract**. Hooks, CI, and config are **enforcement**. If they disagree, raise enforcement; never lower this file.
+
+| Fact | Where |
+|---|---|
+| Agent handbook | this file |
+| Human docs | README.md, `docs/architecture/*`, `docs/features/*` |
+| Version | root `package.json` `"version"` (also `cli/` + `guardian/` package.json) |
+| Enforcement | `.husky/*`, `.github/workflows/ci.yml` |
+| Machine rules | global `AGENTS.md`, `rules/git-commit.md` |
+| Accidents | [Retrospective.md](Retrospective.md) |
+| Env files | omit. API keys in Keychain (`CODO_API_KEY`); never in git |
+
+## Project Invariants
+
+- `cli/codo.ts` and `hooks/claude-hook.sh` are **copied** to `~/.codo/` by `scripts/install.sh`, not symlinked. After editing them, recopy or install again.
+- Socket `~/.codo/codo.sock`. App is `LSUIElement` menubar (no Dock). Guardian is `guardian/main.ts` stdin/stdout JSON; stderr → `~/.codo/guardian.log`.
+- API keys stay in Keychain. Guardian env is injected by the app (`CODO_PROVIDER`, `CODO_API_KEY`, …).
+- Integration tests use a fake `HOME` + `CodoTestServer`. Do not point them at the human `~/.codo`.
+- macOS 14+, Swift 5.10, Bun, SwiftLint.
+
+## Stack / Layout
+
+| Component | Choice |
+|---|---|
+| Language | Swift 5.10 (app/core) + TypeScript (cli + guardian, Bun) |
+| Package manager | SwiftPM + Bun (`cli/`, `guardian/`) |
+| Runtime | macOS menubar app + Unix socket CLI |
+| Lint | SwiftLint `--strict`; Biome `--error-on-warnings` on cli/guardian |
+| Tests | `swift test`; `bun test` in cli + guardian; `scripts/integration-test.sh` |
+| Data | local socket + logs under `~/.codo/` |
 
 ```
-Claude Code hooks → claude-hook.sh → codo CLI → Unix socket → Codo.app (daemon)
-                                                                  ├─ Guardian alive → stdin pipe → guardian/main.ts (AI)
-                                                                  └─ Guardian dead  → FallbackNotification
+Sources/Codo  Sources/CodoCore  Tests/CodoCoreTests
+cli/  guardian/  hooks/  scripts/
 ```
 
-- **Codo.app**: Swift menubar app (NSApplication.accessory, LSUIElement). No Dock icon.
-- **Guardian**: Bun subprocess (`guardian/main.ts`), communicates via stdin/stdout JSON lines, stderr → `~/.codo/guardian.log`
-- **CLI**: `cli/codo.ts` — sends JSON to daemon via Unix Domain Socket (`~/.codo/codo.sock`)
-- **Hook**: `hooks/claude-hook.sh` — maps Claude Code events to `codo --hook <type>`
-
-## Build
+## Commands
 
 ```bash
+bun install
+swift test
+cd cli && bun test
+cd guardian && bun test
+swiftlint lint --strict --quiet
+cd cli && bunx biome check --error-on-warnings .
+cd guardian && bunx biome check --error-on-warnings .
 ./scripts/build.sh
-# Output: .build/release/Codo.app (signed bundle)
-```
-
-Manual equivalent:
-```bash
-swift build -c release
-# Then assemble .app bundle, actool, codesign (see scripts/build.sh)
-```
-
-## Install (deploy to ~/.codo)
-
-```bash
 ./scripts/install.sh
+./scripts/integration-test.sh
 ```
 
-Manual equivalent:
-```bash
-cp cli/codo.ts ~/.codo/codo.ts && chmod 700 ~/.codo/codo.ts
-cp hooks/claude-hook.sh ~/.codo/hooks/claude-hook.sh && chmod 755 ~/.codo/hooks/claude-hook.sh
-cp -R .build/release/Codo.app ~/Applications/Codo.app
-```
+## Verification
 
-**IMPORTANT**: `codo.ts` and `claude-hook.sh` are COPIED (not symlinked). After modifying these files in the repo, you MUST re-copy them to `~/.codo/` for changes to take effect.
+Status: `enforced` | `planned` | `manual` | `N/A`. `enforced` Evidence = hook/CI/config/script.
 
-## Restart
+Org gaps: index-snapshot pre-commit; stdin-range pre-push; TS coverage thresholds; Swift coverage fail-under (CI enables coverage, no % gate); G2 on hooks.
 
-### Full restart (app + guardian + socket)
-```bash
-pkill -f "Codo.app/Contents/MacOS/Codo" 2>/dev/null; sleep 1
-open .build/release/Codo.app   # dev mode
-# or: open ~/Applications/Codo.app   # installed mode
-```
+Today: pre-commit `swift test` + cli/guardian `bun test` + SwiftLint + Biome (working tree). pre-push repeats that then `scripts/integration-test.sh`. CI: macOS `swift test --enable-code-coverage`; Ubuntu bun test + Biome + gitleaks. OSV runs with `|| true` (not a gate).
 
-Guardian is auto-spawned by Codo.app on launch (if enabled in settings + API key present).
+| Change | Proof | Status | Evidence |
+|---|---|---|---|
+| Logic Swift | `swift test` | enforced | pre-commit; CI `swift-tests` |
+| Logic TS | `bun test` cli + guardian (no coverage %) | enforced | pre-commit; CI `quality` |
+| IPC L2 | UDS against `CodoTestServer` + fake HOME | enforced | pre-push `integration-test.sh` |
+| UI L3 | Playwright | N/A | — |
+| Types / lint | SwiftLint strict + Biome 0 warning | enforced | pre-commit + CI Biome |
+| G2 secrets | gitleaks | enforced | CI only (not husky) |
+| G2 deps | osv cli + guardian lockfiles | planned | CI `osv-scanner … \|\| true` |
+| Bundler | `scripts/build.sh` → `.build/release/Codo.app` | manual | operator |
+| Docs | numbered doc if behavior changes | manual | human review |
+| Release | copy CLI/hook + app via `install.sh` | manual | `./scripts/install.sh` |
 
-### Guardian-only restart
-Killing guardian triggers auto-restart by Codo.app (1s delay, max 3 retries before disable):
-```bash
-pkill -f "guardian/main.ts"
-```
+Index-snapshot pre-commit and stdin-range pre-push are planned. `--no-verify` forbidden on commits and branch pushes.
 
-### When to restart
-| Changed file | Action needed |
-|---|---|
-| `guardian/*.ts` | Kill guardian: `pkill -f "guardian/main.ts"` (auto-restarts with new code) |
-| `cli/codo.ts` | Copy to `~/.codo/`: `cp cli/codo.ts ~/.codo/codo.ts` |
-| `hooks/claude-hook.sh` | Copy to `~/.codo/hooks/`: `cp hooks/claude-hook.sh ~/.codo/hooks/claude-hook.sh` |
-| `Sources/**/*.swift` | Full rebuild + restart: `./scripts/build.sh && pkill -f Codo.app; sleep 1; open .build/release/Codo.app` |
-| `guardian/package.json` | `cd guardian && bun install` then kill guardian |
+## Resources / Isolation
 
-## Verify
+| Purpose | Port / resource | Isolation |
+|---|---|---|
+| Dev/install | `~/.codo/codo.sock`, `~/Applications/Codo.app` | human machine |
+| Integration | temp `$HOME/.codo` | `mktemp` in `integration-test.sh` |
 
-```bash
-# Check processes
-ps aux | grep -E "Codo.app|guardian/main" | grep -v grep
+## Operations / Release
 
-# Check socket
-ls -la ~/.codo/codo.sock
-
-# Send test notification
-echo '{"title":"Test","body":"Hello"}' | bun ~/.codo/codo.ts
-
-# Check logs
-tail -f ~/.codo/guardian.log    # guardian stderr (TypeScript layer)
-tail -f ~/.codo/hooks.log       # hook + CLI layer
-```
-
-## Testing
-
-```bash
-# All tests (Swift + TS + Guardian) — run by pre-commit hook
-bun test                        # guardian tests only
-cd cli && bun test              # CLI tests only
-swift test                      # Swift tests only
-```
-
-## Key Paths
-
-| Path | Purpose |
-|---|---|
-| `~/.codo/codo.sock` | Unix Domain Socket (daemon ↔ CLI) |
-| `~/.codo/codo.ts` | Installed CLI (COPY from `cli/codo.ts`) |
-| `~/.codo/hooks/claude-hook.sh` | Installed hook (COPY from `hooks/claude-hook.sh`) |
-| `~/.codo/guardian.log` | Guardian stderr log |
-| `~/.codo/hooks.log` | Hook + CLI diagnostic log |
-| `.build/release/Codo.app` | Built app bundle (dev mode) |
-
-## Environment Variables
-
-Guardian reads from Codo.app settings (passed as env to subprocess):
-- `CODO_PROVIDER` — AI provider (minimax, anthropic, custom, etc.)
-- `CODO_API_KEY` — stored in Keychain
-- `CODO_MODEL`, `CODO_BASE_URL`, `CODO_SDK_TYPE`, `CODO_CONTEXT_LIMIT`
-- `CODO_DEBUG=1` — enable JSON structured logging in guardian
+- Entry: `./scripts/build.sh` then `./scripts/install.sh`. Who: the machine owner (codesign local). No GitHub CD.
+- After CLI/hook edits, recopy to `~/.codo`. Live-check: `ps` for Codo/guardian, `ls ~/.codo/codo.sock`, `echo '{"title":"Test","body":"Hello"}' | bun ~/.codo/codo.ts`.
 
 ## Retrospective
 
-### 2026-03-20: Notification chain silent failure
-**Root cause**: `~/.codo/codo.ts` was v0.1.0 (no `--hook` support). The old CLI silently ignored `--hook` as an unknown flag, then failed with "title is required" (exit 1). The old `claude-hook.sh` had a `$?` bug that captured `echo`'s exit code (0) instead of the CLI's (1), masking the failure.
+| Kind | Where |
+|---|---|
+| Accident narrative | [Retrospective.md](Retrospective.md) |
+| Recurring project rule | one line here (cap ~10) |
+| Checkable rule | hook or test |
 
-**Lesson**: After adding new CLI features (like `--hook`), MUST deploy to `~/.codo/codo.ts`. Files are copies, not symlinks. Added persistent `hooks.log` and `PIPESTATUS` fix to catch this class of error.
+- Installed CLI/hook are copies. Recopy after edits.
+- Do not trust `$?` after `echo` in hook scripts (`PIPESTATUS`).
