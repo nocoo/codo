@@ -56,27 +56,25 @@ This runs `husky` via the `prepare` script, which sets up `.husky/` as the git h
 | **pre-commit** | Swift + TS unit tests, SwiftLint, Biome | `swift test` + `bun test` (cli, guardian) + lint |
 | **pre-push** | same + UDS integration | also `scripts/integration-test.sh` |
 
-Hooks **cannot be skipped** — this is by design. Every commit must pass unit tests and lint.
+`--no-verify` is forbidden. Every commit must pass unit tests and lint.
 
 ### Running Tests Manually
 
 ```bash
-# L1: Swift unit tests (46 tests)
+# Swift + TS unit tests
 swift test
-
-# L1: TypeScript unit tests (60 tests)
 cd cli && bun test
+cd guardian && bun test
 
-# L2: Swift lint
+# G1 lint
 swiftlint lint --strict --quiet
+cd cli && bunx biome check --error-on-warnings .
+cd guardian && bunx biome check --error-on-warnings .
 
-# L2: TypeScript lint
-cd cli && bunx biome check .
-
-# L3: Integration tests (16 tests)
+# UDS integration (pre-push)
 ./scripts/integration-test.sh
 
-# L4: E2E manual test
+# Native UI checklist (manual)
 ./scripts/e2e-test.sh
 
 # Swift coverage report (target: 90%+ on CodoCore)
