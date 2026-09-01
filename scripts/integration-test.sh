@@ -174,16 +174,18 @@ for i in 1 2 3; do
     HOME="$FAKE_HOME" bun "$CLI" "Concurrent-$i" 2>/dev/null &
     PIDS="$PIDS $!"
 done
+CONCUR_FAIL=0
 for pid in $PIDS; do
-    wait "$pid" 2>/dev/null
+    if ! wait "$pid"; then
+        CONCUR_FAIL=1
+    fi
 done
-# Verify server is still alive by sending one more
 STDOUT=$(HOME="$FAKE_HOME" bun "$CLI" "AfterConcurrent" 2>/dev/null)
 EXIT=$?
-if [ "$EXIT" -eq 0 ] && [ -z "$STDOUT" ]; then
-    pass "concurrent clients → server survives, exit 0"
+if [ "$CONCUR_FAIL" -eq 0 ] && [ "$EXIT" -eq 0 ] && [ -z "$STDOUT" ]; then
+    pass "concurrent clients → all exit 0, server survives"
 else
-    fail "concurrent clients → server survives, exit 0" "exit=$EXIT"
+    fail "concurrent clients → all exit 0, server survives" "child_fail=$CONCUR_FAIL exit=$EXIT"
 fi
 
 # Cleanup temp file
