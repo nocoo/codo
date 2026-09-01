@@ -53,8 +53,8 @@ This runs `husky` via the `prepare` script, which sets up `.husky/` as the git h
 
 | Hook | Stage | What runs |
 |------|-------|-----------|
-| **pre-commit** | L1+L2 | `swift test` + `bun test` + SwiftLint strict + Biome lint |
-| **pre-push** | L1+L2+L3 | Unit tests + lint + integration tests |
+| **pre-commit** | Swift + TS unit tests, SwiftLint, Biome | `swift test` + `bun test` (cli, guardian) + lint |
+| **pre-push** | same + UDS integration | also `scripts/integration-test.sh` |
 
 Hooks **cannot be skipped** — this is by design. Every commit must pass unit tests and lint.
 
