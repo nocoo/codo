@@ -12,7 +12,7 @@ This file is the **contract**. Hooks, CI, and config are **enforcement**. If the
 |---|---|
 | Agent handbook | this file |
 | Human docs | README.md, `docs/architecture/*`, `docs/features/*` |
-| Version | root `package.json` `"version"` (also `cli/` + `guardian/` package.json) |
+| Version | independently set in root/`cli/`/`guardian/` `package.json`, `cli/codo.ts` `VERSION`, `CodoInfo.version`, `Resources/Info.plist` |
 | Enforcement | `.husky/*`, `.github/workflows/ci.yml` |
 | Machine rules | global `AGENTS.md`, `rules/git-commit.md` |
 | Accidents | [Retrospective.md](Retrospective.md) |
@@ -69,8 +69,8 @@ Today: pre-commit `swift test` + cli/guardian `bun test` + SwiftLint + Biome (wo
 |---|---|---|---|
 | Logic Swift | `swift test` | enforced | pre-commit; CI `swift-tests` |
 | Logic TS | `bun test` cli + guardian (no coverage %) | enforced | pre-commit; CI `quality` |
-| IPC L2 | UDS against `CodoTestServer` + fake HOME | enforced | pre-push `integration-test.sh` |
-| UI L3 | Playwright | N/A | — |
+| IPC L2 | UDS against `CodoTestServer` + fake HOME | enforced | pre-push `scripts/integration-test.sh` (must exist) |
+| Native UI | menubar/toast checklist | manual | `scripts/e2e-test.sh` |
 | Types / lint | SwiftLint strict + Biome 0 warning | enforced | pre-commit + CI Biome |
 | G2 secrets | gitleaks | enforced | CI only (not husky) |
 | G2 deps | osv cli + guardian lockfiles | planned | CI `osv-scanner … \|\| true` |
@@ -90,6 +90,7 @@ Index-snapshot pre-commit and stdin-range pre-push are planned. `--no-verify` fo
 ## Operations / Release
 
 - Entry: `./scripts/build.sh` then `./scripts/install.sh`. Who: the machine owner (codesign local). No GitHub CD.
+- `build.sh` does **not** copy `guardian/` into `Codo.app/Contents/Resources/`. Production `GuardianPathResolver` path is unimplemented; Guardian only resolves by walking up from a repo `.build` layout. `~/Applications/Codo.app` will not launch Guardian.
 - After CLI/hook edits, recopy to `~/.codo`. Live-check: `ps` for Codo/guardian, `ls ~/.codo/codo.sock`, `echo '{"title":"Test","body":"Hello"}' | bun ~/.codo/codo.ts`.
 
 ## Retrospective
@@ -102,3 +103,4 @@ Index-snapshot pre-commit and stdin-range pre-push are planned. `--no-verify` fo
 
 - Installed CLI/hook are copies. Recopy after edits.
 - Do not trust `$?` after `echo` in hook scripts (`PIPESTATUS`).
+- Do not expect Guardian from `~/Applications/Codo.app` until `build.sh` packs `guardian/`.
