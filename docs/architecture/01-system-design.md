@@ -104,7 +104,7 @@ codo/
 │   │   ├── AppDelegate.swift       ← NSStatusItem, menu, wiring
 │   │   ├── SettingsWindow.swift    ← Programmatic NSWindow for Guardian config
 │   │   └── SettingsViewModel.swift ← @Published bindings for settings UI
-│   └── CodoTestServer/             ← Minimal test server for L3 integration
+│   └── CodoTestServer/             ← Minimal test server for IPC integration
 │       └── CodoTestServer.swift
 ├── Tests/
 │   └── CodoCoreTests/              ← L1 unit tests (swift test)
@@ -131,8 +131,8 @@ codo/
 ├── scripts/
 │   ├── build.sh                    ← Build + assemble + sign .app
 │   ├── install.sh                  ← Install .app + symlink CLI
-│   ├── integration-test.sh         ← L3 integration tests
-│   └── e2e-test.sh                ← L4 semi-automated E2E tests
+│   ├── integration-test.sh         ← IPC integration tests
+│   └── e2e-test.sh                ← Native UI manual checklist
 └── docs/
 ```
 
@@ -239,7 +239,7 @@ Package.swift
 ├── Codo            (.executableTarget) ← App shell, depends on CodoCore
 │   ├── SettingsWindow                  ← NSWindow for Guardian config
 │   └── SettingsViewModel               ← @Published bindings
-├── CodoTestServer  (.executableTarget) ← Test server for L3 integration
+├── CodoTestServer  (.executableTarget) ← Test server for IPC integration
 └── CodoCoreTests   (.testTarget)      ← Tests, depends on CodoCore
 ```
 

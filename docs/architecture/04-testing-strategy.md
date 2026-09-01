@@ -7,9 +7,9 @@
 | Layer | What | When | Tool |
 |-------|------|------|------|
 | **L1 — Unit Tests** | Swift: message codec, socket roundtrip, notification service, MessageRouter, Guardian. TS: arg parsing, JSON construction, template expansion, hook flags. Guardian: classifier, state, LLM, fallback, main | pre-commit | `swift test` + `bun test` (cli + guardian) |
-| **L2 — Lint** | Swift: SwiftLint strict. TS: Biome (cli + guardian) | pre-commit | `swiftlint` + `bunx biome check` |
-| **L3 — Integration** | Full socket roundtrip: TS CLI → UDS → Swift server → response | pre-push | Script: start server, run CLI, assert |
-| **L4 — E2E Checklist** | `.app` bundle: install, permission, toast display | Manual (pre-release) | Human |
+| **G1 — Lint** | Swift: SwiftLint strict. TS: Biome (cli + guardian) | pre-commit | `swiftlint` + `bunx biome check` |
+| **IPC L2 — Integration** | Full socket roundtrip: TS CLI → UDS → Swift server → response | pre-push | Script: start server, run CLI, assert |
+| **Native UI — Checklist** | `.app` bundle: install, permission, toast display | Manual (pre-release) | `scripts/e2e-test.sh` |
 
 ### Why L4 is manual
 

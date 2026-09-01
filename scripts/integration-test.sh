@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 CLI="$PROJECT_DIR/cli/codo.ts"
 
-echo "=== L3: Integration Tests ==="
+echo "=== IPC L2: Integration Tests ==="
 
 # Build Swift (includes CodoTestServer)
 cd "$PROJECT_DIR"
