@@ -90,7 +90,7 @@ else
     fail "menubar icon visible" "user did not see icon"
 fi
 
-if confirm "Click the bell icon — does a menu appear with 'Codo v0.1.0' and 'Quit Codo'?"; then
+if confirm "Click the bell icon — does a menu appear with 'Codo v0.2.0' and 'Quit Codo'?"; then
     pass "menubar menu works"
 else
     fail "menubar menu works" "menu not as expected"

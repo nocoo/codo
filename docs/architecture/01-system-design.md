@@ -167,7 +167,7 @@ Manual `NSApplication` lifecycle (from Owl, proven stable). No SwiftUI views, no
 
 | Item | State | Notes |
 |------|-------|-------|
-| **Codo v0.1.0** | Disabled label | Version from `CodoInfo.version` |
+| **Codo v{CodoInfo.version}** | Disabled label | Currently `0.2.0` |
 | ─── | Separator | |
 | **AI Guardian** | Checkbox | Toggle Guardian on/off (requires API key) |
 | **Settings...** | — | Opens `SettingsWindowController` |
