@@ -9,7 +9,10 @@ echo "=== L3: Integration Tests ==="
 
 # Build Swift (includes CodoTestServer)
 cd "$PROJECT_DIR"
-swift build 2>&1 | tail -1
+if ! swift build; then
+    echo "ERROR: swift build failed"
+    exit 1
+fi
 
 TEST_SERVER="$PROJECT_DIR/.build/debug/CodoTestServer"
 if [ ! -f "$TEST_SERVER" ]; then
@@ -44,7 +47,7 @@ trap cleanup EXIT
 echo ""
 echo "--- CLI flags ---"
 
-STDERR=$(bun "$CLI" --help 2>&1 || true)
+STDERR=$(bun "$CLI" --help 2>&1)
 EXIT=$?
 if [ "$EXIT" -eq 0 ] && echo "$STDERR" | grep -q "Usage:"; then
     pass "--help exits 0 with usage"
@@ -52,7 +55,7 @@ else
     fail "--help exits 0 with usage" "exit=$EXIT stderr='$STDERR'"
 fi
 
-STDERR=$(bun "$CLI" --version 2>&1 || true)
+STDERR=$(bun "$CLI" --version 2>&1)
 EXIT=$?
 if [ "$EXIT" -eq 0 ] && echo "$STDERR" | grep -q "codo 0.2.0"; then
     pass "--version exits 0 with version"
