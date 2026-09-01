@@ -10,14 +10,14 @@ cd cli && bun test 2>&1 && cd ..
 echo "=== L1: Guardian Unit Tests ==="
 cd guardian && bun test 2>&1 && cd ..
 
-echo "=== L2: Swift Lint ==="
+echo "=== G1: Swift Lint ==="
 swiftlint lint --strict --quiet
 
-echo "=== L2: TS Lint ==="
+echo "=== G1: TS Lint ==="
 cd cli && bunx biome check --error-on-warnings . && cd ..
 cd guardian && bunx biome check --error-on-warnings . && cd ..
 
-echo "=== L3: Integration Tests ==="
+echo "=== IPC L2: Integration Tests ==="
 if [ ! -f scripts/integration-test.sh ]; then
   echo "❌ scripts/integration-test.sh missing" >&2
   exit 1

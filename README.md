@@ -92,7 +92,7 @@ xcrun llvm-cov report \
 | CodoCore (testable) | 91% | ≥ 90% |
 | CLI (parseArgs/parseStdin) | 100% | — |
 
-`SystemNotificationProvider` is excluded from coverage — it requires a real `.app` bundle with `UNUserNotificationCenter` and is tested via L4 E2E manual checklist.
+`SystemNotificationProvider` is excluded from coverage — it requires a real `.app` bundle with `UNUserNotificationCenter` and is tested via the manual native UI checklist (`scripts/e2e-test.sh`).
 
 ### Build & Install
 

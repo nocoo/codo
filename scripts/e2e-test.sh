@@ -1,5 +1,5 @@
 #!/bin/bash
-# L4: End-to-End Manual Test Script
+# Native UI manual checklist
 # Requires human verification for UI elements (menubar icon, notification banners).
 # Run: bash scripts/e2e-test.sh
 
@@ -27,7 +27,7 @@ confirm() {
     fi
 }
 
-echo "=== L4: End-to-End Manual Tests ==="
+echo "=== Native UI manual tests ==="
 echo ""
 
 # --- Build ---
@@ -324,7 +324,7 @@ rm -f ~/.codo/codo.sock
 
 # --- Summary ---
 echo ""
-echo "=== L4 Results: $PASS passed, $FAIL failed, $SKIP skipped ==="
+echo "=== Native UI results: $PASS passed, $FAIL failed, $SKIP skipped ==="
 
 if [ "$FAIL" -gt 0 ]; then
     exit 1
