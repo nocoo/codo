@@ -11,7 +11,7 @@
 | **IPC L2 — Integration** | Full socket roundtrip: TS CLI → UDS → Swift server → response | pre-push | Script: start server, run CLI, assert |
 | **Native UI — Checklist** | `.app` bundle: install, permission, toast display | Manual (pre-release) | `scripts/e2e-test.sh` |
 
-### Why L4 is manual
+### Why native UI is manual
 
 Toast display depends on macOS notification permission, code signature, and bundle identity. These cannot be reliably automated. A checklist is more honest than a flaky test.
 
@@ -150,7 +150,7 @@ File: `guardian/*.test.ts`, run with `cd guardian && bun test`.
 | malformed JSON | bad input | error logged, no crash |
 | sequential events | 3 events | all processed, state accumulated |
 
-## L2 — Lint
+## G1 — Lint
 
 ### Swift
 
@@ -177,7 +177,7 @@ excluded:
 { "linter": { "rules": { "recommended": true } } }
 ```
 
-## L3 — Integration Tests
+## IPC L2 — Integration Tests
 
 Script-based: spin up a real Swift `CodoTestServer` on a temp socket, call from TS CLI, assert response. The test server logs all received messages to `$SOCK_DIR/messages.log` for field verification.
 
@@ -206,7 +206,7 @@ Script-based: spin up a real Swift `CodoTestServer` on a temp socket, call from 
 | --hook unknown type | `--hook bogus` | exit 1, error message |
 | --hook with title arg | `"Title" --hook stop` | exit 1, conflict error |
 
-## L4 — E2E Checklist
+## Native UI — Checklist
 
 ```markdown
 ## Pre-release E2E Checklist
@@ -290,7 +290,7 @@ swift test
 cd cli && bun test && cd ..
 cd guardian && bun test && cd ..
 
-# L2: Lint
+# G1: Lint
 swiftlint lint --strict --quiet
 cd cli && bunx biome check . && cd ..
 cd guardian && bunx biome check . && cd ..
@@ -307,12 +307,12 @@ swift test
 cd cli && bun test && cd ..
 cd guardian && bun test && cd ..
 
-# L2: Lint
+# G1: Lint
 swiftlint lint --strict --quiet
 cd cli && bunx biome check . && cd ..
 cd guardian && bunx biome check . && cd ..
 
-# L3: Integration
+# IPC L2: Integration
 ./scripts/integration-test.sh
 ```
 
