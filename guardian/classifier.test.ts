@@ -14,51 +14,51 @@ function makeEvent(
 
 describe("classifyBashEvent", () => {
   test("npm test → important", () => {
-    expect(classifyBashEvent("npm test", "")).toBe("important");
+    expect(classifyBashEvent("npm test")).toBe("important");
   });
 
   test("swift build → important", () => {
-    expect(classifyBashEvent("swift build", "")).toBe("important");
+    expect(classifyBashEvent("swift build")).toBe("important");
   });
 
   test("swift test → important", () => {
-    expect(classifyBashEvent("swift test", "")).toBe("important");
+    expect(classifyBashEvent("swift test")).toBe("important");
   });
 
   test("git commit → important", () => {
-    expect(classifyBashEvent('git commit -m "fix"', "")).toBe("important");
+    expect(classifyBashEvent('git commit -m "fix"')).toBe("important");
   });
 
   test("git push → important", () => {
-    expect(classifyBashEvent("git push", "")).toBe("important");
+    expect(classifyBashEvent("git push")).toBe("important");
   });
 
   test("bun test → important", () => {
-    expect(classifyBashEvent("bun test", "")).toBe("important");
+    expect(classifyBashEvent("bun test")).toBe("important");
   });
 
   test("ls -la → contextual", () => {
-    expect(classifyBashEvent("ls -la", "file1.ts")).toBe("contextual");
+    expect(classifyBashEvent("ls -la")).toBe("contextual");
   });
 
   test("cat file.ts → contextual", () => {
-    expect(classifyBashEvent("cat file.ts", "content")).toBe("contextual");
+    expect(classifyBashEvent("cat file.ts")).toBe("contextual");
   });
 
   test("grep pattern → contextual", () => {
-    expect(classifyBashEvent("grep pattern", "match")).toBe("contextual");
+    expect(classifyBashEvent("grep pattern")).toBe("contextual");
   });
 
   test("echo hello → noise", () => {
-    expect(classifyBashEvent("echo hello", "hello")).toBe("noise");
+    expect(classifyBashEvent("echo hello")).toBe("noise");
   });
 
   test("pwd → noise", () => {
-    expect(classifyBashEvent("pwd", "/tmp")).toBe("noise");
+    expect(classifyBashEvent("pwd")).toBe("noise");
   });
 
-  test("short output with no command → noise", () => {
-    expect(classifyBashEvent("", "short")).toBe("noise");
+  test("empty command → noise", () => {
+    expect(classifyBashEvent("")).toBe("noise");
   });
 });
 

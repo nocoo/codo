@@ -41,10 +41,7 @@ const CONTEXTUAL_PATTERNS = [
 ];
 
 /** Classify a PostToolUse event by command pattern. */
-export function classifyBashEvent(command: string, output: string): EventTier {
-  // Short output is noise
-  if (output && output.length < 10 && !command) return "noise";
-
+export function classifyBashEvent(command: string): EventTier {
   if (!command) return "noise";
 
   // Check important patterns first
@@ -108,8 +105,7 @@ export function classifyEvent(event: HookEvent): ClassifyResult {
 
     case "post-tool-use": {
       const command = extractCommand(event);
-      const output = (event.tool_response as string) ?? "";
-      const tier = classifyBashEvent(command, output);
+      const tier = classifyBashEvent(command);
       log.debug("classifyEvent", "post-tool-use classified", {
         tool: (event.tool_name as string) ?? "unknown",
         cmd: command.slice(0, 80),
