@@ -1,0 +1,51 @@
+{
+	"study": "codo/2026-09-07-01",
+	"finishing": "01",
+	"method": "generated",
+	"generationCalls": 1,
+	"nativeDimensions": [2048, 2048],
+	"sourceRevisionBefore": "66df73c4141f3e01a89fd6693f574d1d75fc5e4a",
+	"previous": {
+		"kind": "original",
+		"original": "/logos/originals/codo.png",
+		"sourcePath": "logo.png",
+		"sourceUrl": "https://github.com/nocoo/codo/blob/66df73c4141f3e01a89fd6693f574d1d75fc5e4a/logo.png",
+		"modified": false,
+		"width": 2048,
+		"height": 2048,
+		"bytes": 1757813,
+		"sha256": "d078deff35f8dfc10b8b7192ab3ec8f6603de460ae1a3d3d632731281e62bc74",
+		"thumbnail": "/logos/display/codo-160.webp",
+		"display": "/logos/display/codo-1024.webp"
+	},
+	"masters": {
+		"logo.png": {
+			"sha256": "67456a5040ec217dd179bdc54f81f9c71ea44908ea7b25a2e9064e386b2607cf",
+			"width": 2048,
+			"height": 2048
+		},
+		"assets/brand/icon.png": {
+			"sha256": "7468b1cefd8e6483759a5e9b31f34c7ed0243f8d021fda097d8f03be96f500ff",
+			"width": 2048,
+			"height": 2048
+		},
+		"assets/brand/icon-rounded.png": {
+			"sha256": "c1a2ff439774e7702fc1d798f744ad0e9797da1b4a72cd601ba689b83b34f745",
+			"width": 2048,
+			"height": 2048
+		}
+	},
+	"roundedClearancePx": 149.94,
+	"acceptance": {
+		"decisionSource": "owner-delegated batch acceptance",
+		"ownerReviewedExactBytes": false,
+		"scope": "Named ten-project batch"
+	},
+	"review": "https://hexly.ai/logos/codo",
+	"archive": "https://github.com/nocoo/hexly.ai/tree/main/artwork/logo-family/codo/2026-09-07-01",
+	"model": "gpt-image-2",
+	"generation": {
+		"path": "raw/generated.png",
+		"sha256": "76ffd623644d056cbe15f2a924c0bb53fe9e294caccd3f43ce796f75cb66e79c"
+	}
+}

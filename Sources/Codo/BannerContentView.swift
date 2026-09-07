@@ -19,7 +19,6 @@ enum Banner {
 
     // Left column: icon only, top-aligned
     static let iconSize: CGFloat = 40
-    static let iconCornerRadius: CGFloat = 10
     static let leftColumnWidth: CGFloat = 40    // same as icon for icon-only column
     static let columnGap: CGFloat = 12          // left column → right content
 
@@ -89,13 +88,9 @@ final class BannerContentView: NSView {
 
         // ── Left column: Icon only (top-aligned in glass) ──
         let iconView = NSImageView()
-        if let appIcon = NSImage(named: NSImage.applicationIconName) {
-            iconView.image = appIcon
-        }
+        iconView.image = Bundle.main.image(forResource: "logo")
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.wantsLayer = true
-        iconView.layer?.cornerRadius = Banner.iconCornerRadius
-        iconView.layer?.masksToBounds = true
         addSubview(iconView)
 
         // ── Right column, row 1: [Title] [Badge] on one line ──

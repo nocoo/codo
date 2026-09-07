@@ -43,6 +43,7 @@ xcrun actool "$PROJECT_DIR/Resources/Assets.xcassets" \
 # Copy menubar template images
 cp "$PROJECT_DIR/Resources/menubar.png" "$APP_BUNDLE/Contents/Resources/"
 cp "$PROJECT_DIR/Resources/menubar@2x.png" "$APP_BUNDLE/Contents/Resources/"
+cp "$PROJECT_DIR/logo.png" "$APP_BUNDLE/Contents/Resources/logo.png"
 
 # Sign with Apple Development (stable TCC identity across rebuilds)
 SIGN_IDENTITY="Apple Development"

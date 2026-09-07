@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/icon-rounded.png" alt="Codo" width="128" height="128" />
+</p>
+
 # Codo
 
 macOS menubar daemon + CLI for displaying system toast notifications. Designed as a notification bridge for Claude Code hooks and other AI agent workflows.

@@ -49,7 +49,7 @@ struct ProjectRow: View {
            let nsImage = NSImage(contentsOfFile: logoPath) {
             Image(nsImage: nsImage)
                 .resizable()
-                .aspectRatio(contentMode: .fill)
+                .scaledToFill()
                 .clipShape(RoundedRectangle(cornerRadius: 4))
         } else {
             Image(systemName: "folder.fill")
