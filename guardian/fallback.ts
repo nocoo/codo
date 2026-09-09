@@ -50,7 +50,7 @@ export function fallbackNotification(
 
     case "post-tool-use": {
       const command = extractCommand(event);
-      const tier = classifyBashEvent(command, "");
+      const tier = classifyBashEvent(command);
       if (tier !== "important") {
         log.debug("fallback", "post-tool-use skipped (not important)", {
           tier,
