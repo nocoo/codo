@@ -1,8 +1,5 @@
 import AppKit
 import CodoCore
-import os
-
-private let logger = Logger(subsystem: "ai.hexly.codo.04", category: "banner")
 
 /// Custom banner notification provider using a floating NSPanel.
 /// Replaces UNUserNotificationCenter to avoid system notification grouping/suppression.
@@ -182,12 +179,5 @@ final class BannerWindow: NSPanel {
             self?.close()
             self?.onDismiss?()
         }
-    }
-
-    func dismissImmediately() {
-        dismissTimer?.invalidate()
-        dismissTimer = nil
-        close()
-        onDismiss?()
     }
 }
