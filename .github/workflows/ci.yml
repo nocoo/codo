@@ -20,12 +20,12 @@ jobs:
     with:
       runtime-version: "1.4.2"
       install-policy: "blocked"
-      extra-install-dirs: "cli,guardian"
+      working-directory: "guardian"
       typecheck: false
-      disabled-check-reasons: '{"typecheck": "no root tsconfig; subprojects are checked during test and lint"}'
-      lint-command: "bunx biome check --error-on-warnings cli guardian"
-      test-command: "cd cli && bun test && cd ../guardian && bun test"
-      lockfiles: "cli/bun.lock,guardian/bun.lock"
-      osv-config: "osv-scanner.toml"
-      gitleaks-config: ".gitleaks.toml"
+      disabled-check-reasons: '{"typecheck": "no tsconfig in guardian; subproject checked during test and lint"}'
+      lint-command: "bunx biome check --error-on-warnings . ../cli"
+      test-command: "bun test && cd ../cli && bun test"
+      lockfiles: "bun.lock"
+      osv-config: "../osv-scanner.toml"
+      gitleaks-config: "../.gitleaks.toml"
     secrets: inherit
