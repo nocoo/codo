@@ -1,31 +1,35 @@
 name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
-
 jobs:
   swift-tests:
-    uses: nocoo/base-ci/.github/workflows/test-job.yml@ab52d72877d386c9a8fd224e9ac868e88be90539
+    uses: nocoo/base-ci/.github/workflows/test-job.yml@ad43150de3a2be2fa464b5cd2f921dc4fa9f8f0f
     with:
-      runner: "macos-latest"
-      runtime: "none"
-      command: "swift test --enable-code-coverage"
-
+      runner: macos-latest
+      runtime: none
+      command: swift test --enable-code-coverage
   quality:
-    uses: nocoo/base-ci/.github/workflows/quality.yml@ab52d72877d386c9a8fd224e9ac868e88be90539
+    uses: nocoo/base-ci/.github/workflows/quality.yml@ad43150de3a2be2fa464b5cd2f921dc4fa9f8f0f
     with:
-      runtime-version: "1.4.2"
-      install-policy: "blocked"
-      working-directory: "guardian"
+      runtime-version: 1.4.2
+      install-policy: blocked
+      working-directory: guardian
       typecheck: false
-      disabled-check-reasons: '{"typecheck": "no tsconfig in guardian; subproject checked during test and lint"}'
-      lint-command: "bunx biome check --error-on-warnings . ../cli"
-      test-command: "bun test && cd ../cli && bun test"
-      lockfiles: "bun.lock"
-      osv-config: "../osv-scanner.toml"
-      gitleaks-config: "../.gitleaks.toml"
-    secrets: inherit
+      disabled-check-reasons: '{"typecheck": "no tsconfig in guardian; subproject checked during test and lint", "security": "Dedicated security
+        job scans the complete repository and the Guardian dependency lock."}'
+      lint-command: bunx biome check --error-on-warnings . ../cli
+      test-command: bun test && cd ../cli && bun test
+      security: false
+  security:
+    uses: nocoo/base-ci/.github/workflows/security.yml@ad43150de3a2be2fa464b5cd2f921dc4fa9f8f0f
+    with:
+      lockfiles: guardian/bun.lock
+      osv-config: osv-scanner.toml
+      gitleaks-config: .gitleaks.toml
+      scan-history: true
+'on':
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: null
