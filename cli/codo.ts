@@ -31,7 +31,11 @@ export function getCwd(): string | undefined {
   try {
     return realpathSync(process.cwd());
   } catch {
-    try { return process.cwd(); } catch { return undefined; }
+    try {
+      return process.cwd();
+    } catch {
+      return undefined;
+    }
   }
 }
 
@@ -298,9 +302,7 @@ async function sendToDaemon(
               const response = JSON.parse(data.trim()) as CodoResponse;
               resolve(response);
             } catch {
-              reject(
-                new DaemonError("unexpected response from daemon", 3),
-              );
+              reject(new DaemonError("unexpected response from daemon", 3));
             }
             _socket.end();
           }
@@ -313,10 +315,7 @@ async function sendToDaemon(
         error(_socket, err) {
           clearTimeout(timer);
           reject(
-            new DaemonError(
-              `cannot connect to codo daemon: ${err.message}`,
-              3,
-            ),
+            new DaemonError(`cannot connect to codo daemon: ${err.message}`, 3),
           );
         },
         close() {
@@ -328,10 +327,7 @@ async function sendToDaemon(
         connectError(_socket, err) {
           clearTimeout(timer);
           reject(
-            new DaemonError(
-              `cannot connect to codo daemon: ${err.message}`,
-              3,
-            ),
+            new DaemonError(`cannot connect to codo daemon: ${err.message}`, 3),
           );
         },
       },
@@ -348,7 +344,11 @@ class DaemonError extends Error {
 }
 
 /** Lightweight diagnostic log for --hook mode. Writes to stderr (captured by hooks.log). */
-function hookLog(level: string, msg: string, data?: Record<string, unknown>): void {
+function hookLog(
+  level: string,
+  msg: string,
+  data?: Record<string, unknown>,
+): void {
   const parts = [`[codo-cli] ${level} ${msg}`];
   if (data) {
     for (const [k, v] of Object.entries(data)) {
@@ -400,7 +400,10 @@ async function main(): Promise<void> {
     const stdinText = await Bun.stdin.text();
     const hookResult = parseHook(hookType, stdinText);
     if ("error" in hookResult) {
-      hookLog("ERROR", "parse failed", { hook: hookType, error: hookResult.error });
+      hookLog("ERROR", "parse failed", {
+        hook: hookType,
+        error: hookResult.error,
+      });
       console.error(hookResult.error);
       process.exit(1);
     }
@@ -414,7 +417,9 @@ async function main(): Promise<void> {
       hookLog("DEBUG", "connecting", { socket: SOCKET_PATH });
       const response = await sendToDaemon(hookResult.payload);
       if (!response.ok) {
-        hookLog("ERROR", "daemon rejected", { error: response.error ?? "unknown" });
+        hookLog("ERROR", "daemon rejected", {
+          error: response.error ?? "unknown",
+        });
         console.error(response.error || "unknown error");
         process.exit(1);
       }
@@ -422,11 +427,16 @@ async function main(): Promise<void> {
       process.exit(0);
     } catch (err) {
       if (err instanceof DaemonError) {
-        hookLog("ERROR", "daemon error", { error: err.message, exit: String(err.exitCode) });
+        hookLog("ERROR", "daemon error", {
+          error: err.message,
+          exit: String(err.exitCode),
+        });
         console.error(err.message);
         process.exit(err.exitCode);
       }
-      hookLog("ERROR", "unexpected", { error: err instanceof Error ? err.message : "unknown" });
+      hookLog("ERROR", "unexpected", {
+        error: err instanceof Error ? err.message : "unknown",
+      });
       console.error("unexpected error");
       process.exit(3);
     }

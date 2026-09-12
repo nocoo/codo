@@ -68,7 +68,8 @@ describe("classifyEvent", () => {
       makeEvent({
         _hook: "stop",
         cwd: "/tmp",
-        last_assistant_message: "I have completed the refactoring of the authentication module.",
+        last_assistant_message:
+          "I have completed the refactoring of the authentication module.",
       }),
     );
     expect(result.tier).toBe("important");
@@ -92,9 +93,7 @@ describe("classifyEvent", () => {
   });
 
   test("Stop with no message → contextual, no LLM", () => {
-    const result = classifyEvent(
-      makeEvent({ _hook: "stop", cwd: "/tmp" }),
-    );
+    const result = classifyEvent(makeEvent({ _hook: "stop", cwd: "/tmp" }));
     expect(result.tier).toBe("contextual");
     expect(result.shouldTriggerLLM).toBe(false);
   });

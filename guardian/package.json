@@ -6,6 +6,7 @@
   "private": true,
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
-    "openai": "^6.39.0"
+    "openai": "^6.39.0",
+    "@biomejs/biome": "2.5.12"
   }
 }

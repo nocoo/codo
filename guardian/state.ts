@@ -1,8 +1,8 @@
 import { realpathSync } from "node:fs";
-import type { HookEvent, HookEventName } from "./types";
-import { extractCommand } from "./types";
 import { classifyEvent } from "./classifier";
 import { createLogger } from "./logger";
+import type { HookEvent, HookEventName } from "./types";
+import { extractCommand } from "./types";
 
 const log = createLogger("state");
 
@@ -221,10 +221,7 @@ export function updateState(store: StateStore, event: HookEvent): void {
   }
 }
 
-export function evictStaleProjects(
-  store: StateStore,
-  maxAgeMs: number,
-): void {
+export function evictStaleProjects(store: StateStore, maxAgeMs: number): void {
   const now = Date.now();
   for (const [key, project] of store.projects) {
     if (now - project.lastEventTime > maxAgeMs) {

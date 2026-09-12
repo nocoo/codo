@@ -1,6 +1,6 @@
+import { createLogger } from "./logger";
 import type { HookEvent } from "./types";
 import { extractCommand } from "./types";
-import { createLogger } from "./logger";
 
 const log = createLogger("classifier");
 

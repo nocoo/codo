@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   AI_PROVIDERS,
   ALL_PROVIDER_IDS,
-  isValidProvider,
   getProviderConfig,
+  isValidProvider,
   resolveProviderConfig,
 } from "./providers";
 

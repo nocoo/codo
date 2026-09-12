@@ -1,7 +1,20 @@
 #!/usr/bin/env bun
 
-import { createInterface } from "node:readline";
 import { realpathSync } from "node:fs";
+import { basename } from "node:path";
+import { createInterface } from "node:readline";
+import { classifyEvent } from "./classifier";
+import { fallbackNotification } from "./fallback";
+import { createLLMClient, type LLMClient } from "./llm";
+import { createLogger } from "./logger";
+import {
+  type AiProvider,
+  isValidProvider,
+  resolveProviderConfig,
+  type SdkType,
+} from "./providers";
+import type { StateStore } from "./state";
+import { createStateStore, evictStaleProjects, updateState } from "./state";
 import type {
   GuardianAction,
   GuardianActionMeta,
@@ -9,19 +22,6 @@ import type {
   HookEvent,
 } from "./types";
 import { extractCommand } from "./types";
-import { createStateStore, updateState, evictStaleProjects } from "./state";
-import type { StateStore } from "./state";
-import { classifyEvent } from "./classifier";
-import { createLLMClient, type LLMClient } from "./llm";
-import { fallbackNotification } from "./fallback";
-import {
-  isValidProvider,
-  resolveProviderConfig,
-  type AiProvider,
-  type SdkType,
-} from "./providers";
-import { basename } from "node:path";
-import { createLogger } from "./logger";
 
 const log = createLogger("main");
 
@@ -34,8 +34,7 @@ function readConfig(): GuardianConfig {
     ? providerRaw
     : "custom";
   const sdkTypeRaw = process.env.CODO_SDK_TYPE ?? "openai";
-  const sdkType: SdkType =
-    sdkTypeRaw === "anthropic" ? "anthropic" : "openai";
+  const sdkType: SdkType = sdkTypeRaw === "anthropic" ? "anthropic" : "openai";
 
   const resolved = resolveProviderConfig({
     provider,
@@ -85,7 +84,10 @@ export async function processLine(
   llmClient: LLMClient,
   modelName?: string,
 ): Promise<void> {
-  log.debug("processLine", "recv", { bytes: line.length, preview: line.slice(0, 120) });
+  log.debug("processLine", "recv", {
+    bytes: line.length,
+    preview: line.slice(0, 120),
+  });
 
   let parsed: Record<string, unknown>;
   try {
@@ -106,7 +108,9 @@ export async function processLine(
     await processHookEvent(event, state, llmClient, modelName);
   } else if (parsed.title) {
     // CodoMessage — forward directly as notification (defensive compatibility path)
-    log.info("processLine", "direct CodoMessage", { title: parsed.title as string });
+    log.info("processLine", "direct CodoMessage", {
+      title: parsed.title as string,
+    });
     emitAction({
       action: "send",
       notification: {
@@ -224,14 +228,14 @@ if (import.meta.main) {
 
   rl.on("line", (line: string) => {
     if (!line.trim()) return;
-    queue = queue.then(() => processLine(line, state, llmClient, config.model)).catch(
-      (err) => {
+    queue = queue
+      .then(() => processLine(line, state, llmClient, config.model))
+      .catch((err) => {
         log.error("queue", "unhandled error", {
           error: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
         });
-      },
-    );
+      });
   });
 
   // line handler is the only rl listener — close is handled after startup log

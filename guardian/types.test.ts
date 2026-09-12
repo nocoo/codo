@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { extractCommand } from "./types";
 import type { HookEvent } from "./types";
+import { extractCommand } from "./types";
 
 function makeEvent(
   overrides: Partial<HookEvent> & { _hook: HookEvent["_hook"] },

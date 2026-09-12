@@ -1,8 +1,8 @@
-import type { HookEvent, NotificationPayload } from "./types";
-import { extractCommand } from "./types";
+import { basename } from "node:path";
 import { classifyBashEvent } from "./classifier";
 import { createLogger } from "./logger";
-import { basename } from "node:path";
+import type { HookEvent, NotificationPayload } from "./types";
+import { extractCommand } from "./types";
 
 const log = createLogger("fallback");
 
@@ -98,10 +98,7 @@ export function fallbackNotification(
   }
 }
 
-function truncate(
-  s: unknown,
-  max: number,
-): string | undefined {
+function truncate(s: unknown, max: number): string | undefined {
   if (typeof s !== "string") return undefined;
   return s.length <= max ? s : `${s.slice(0, max)}...`;
 }

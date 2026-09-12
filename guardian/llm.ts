@@ -1,5 +1,9 @@
-import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import { fallbackNotification } from "./fallback";
+import { createLogger } from "./logger";
+import type { StateStore } from "./state";
+import { serializeForPrompt } from "./state";
 import type {
   GuardianConfig,
   GuardianResult,
@@ -7,10 +11,6 @@ import type {
   NotificationPayload,
 } from "./types";
 import { extractCommand } from "./types";
-import type { StateStore } from "./state";
-import { serializeForPrompt } from "./state";
-import { fallbackNotification } from "./fallback";
-import { createLogger } from "./logger";
 
 const log = createLogger("llm");
 
@@ -42,7 +42,8 @@ export const TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[] = [
           },
           body: {
             type: "string",
-            description: "通知正文，简体中文摘要，2-5句概括要点，必须用自己的话总结，禁止复制原始输出",
+            description:
+              "通知正文，简体中文摘要，2-5句概括要点，必须用自己的话总结，禁止复制原始输出",
           },
           subtitle: {
             type: "string",
@@ -188,9 +189,7 @@ export function buildUserMessage(event: HookEvent): string {
         }
       }
       if (event.tool_response) {
-        parts.push(
-          `Output: ${stringify(event.tool_response, 2000)}`,
-        );
+        parts.push(`Output: ${stringify(event.tool_response, 2000)}`);
       }
       break;
 
@@ -252,9 +251,7 @@ function parseOpenAIToolCall(
 
 // ── Anthropic tool call parsing ──
 
-function parseAnthropicToolUse(
-  block: Anthropic.ToolUseBlock,
-): GuardianResult {
+function parseAnthropicToolUse(block: Anthropic.ToolUseBlock): GuardianResult {
   const args = block.input as Record<string, unknown>;
 
   if (block.name === "send_notification") {
@@ -323,10 +320,7 @@ function createOpenAILLMClient(
         });
 
         const controller = new AbortController();
-        const timeout = setTimeout(
-          () => controller.abort(),
-          LLM_TIMEOUT_MS,
-        );
+        const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
         const t0 = performance.now();
 
         const response = await openai.chat.completions.create(
@@ -362,9 +356,7 @@ function createOpenAILLMClient(
             type: tc.type,
             name: tc.type === "function" ? tc.function.name : "(custom)",
             args:
-              tc.type === "function"
-                ? tc.function.arguments.slice(0, 200)
-                : "",
+              tc.type === "function" ? tc.function.arguments.slice(0, 200) : "",
           });
           const result = parseOpenAIToolCall(tc);
           result.usage = {
@@ -429,10 +421,7 @@ function createAnthropicLLMClient(
         });
 
         const controller = new AbortController();
-        const timeout = setTimeout(
-          () => controller.abort(),
-          LLM_TIMEOUT_MS,
-        );
+        const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
         const t0 = performance.now();
 
         const response = await anthropic.messages.create(
@@ -440,9 +429,7 @@ function createAnthropicLLMClient(
             model: config.model,
             max_tokens: COMPLETION_TOKEN_RESERVE,
             system: systemPrompt,
-            messages: [
-              { role: "user", content: userMessage },
-            ],
+            messages: [{ role: "user", content: userMessage }],
             tools: ANTHROPIC_TOOLS,
             tool_choice: { type: "any" },
           },
@@ -461,8 +448,7 @@ function createAnthropicLLMClient(
         });
 
         const toolUse = response.content.find(
-          (block): block is Anthropic.ToolUseBlock =>
-            block.type === "tool_use",
+          (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
         );
 
         if (toolUse) {

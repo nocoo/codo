@@ -15,7 +15,8 @@ jobs:
       typecheck: false
       disabled-check-reasons: '{"typecheck": "no tsconfig in guardian; subproject checked during test and lint", "security": "Dedicated security
         job scans the complete repository and the Guardian dependency lock."}'
-      lint-command: bunx biome check --error-on-warnings . ../cli
+      lint-command: ./node_modules/.bin/biome check --error-on-warnings . ../cli
+      coverage-path: ""
       test-command: bun test && cd ../cli && bun test
       security: false
   security:

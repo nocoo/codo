@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
-  TEMPLATES,
-  VALID_HOOK_TYPES,
   applyTemplate,
   getCwd,
   parseArgs,
   parseHook,
   parseStdin,
+  TEMPLATES,
+  VALID_HOOK_TYPES,
 } from "./codo.ts";
 
 // MARK: - getCwd
@@ -20,15 +20,16 @@ describe("getCwd", () => {
   test("returns an absolute path", () => {
     const result = getCwd();
     expect(result).toBeDefined();
-    expect(result!.startsWith("/")).toBe(true);
+    expect(result?.startsWith("/")).toBe(true);
   });
 
   test("returns canonical path (idempotent with realpathSync)", () => {
     const { realpathSync } = require("node:fs");
     const result = getCwd();
     expect(result).toBeDefined();
+    if (!result) throw new Error("result should be defined");
     // Applying realpathSync again should not change the result
-    expect(realpathSync(result!)).toBe(result);
+    expect(realpathSync(result)).toBe(result);
   });
 });
 
@@ -209,12 +210,7 @@ describe("parseArgs", () => {
 
   // --silent overrides template sound
   test("--silent overrides template sound", () => {
-    const result = parseArgs([
-      "Title",
-      "--template",
-      "success",
-      "--silent",
-    ]);
+    const result = parseArgs(["Title", "--template", "success", "--silent"]);
     expect(result).not.toBeNull();
     if (result && "message" in result) {
       expect(result.message.sound).toBe("none");
@@ -378,10 +374,7 @@ describe("applyTemplate", () => {
   });
 
   test("explicit subtitle wins over template", () => {
-    const result = applyTemplate(
-      { title: "T", subtitle: "Custom" },
-      "success",
-    );
+    const result = applyTemplate({ title: "T", subtitle: "Custom" }, "success");
     expect("message" in result).toBe(true);
     if ("message" in result) {
       expect(result.message.subtitle).toBe("Custom");

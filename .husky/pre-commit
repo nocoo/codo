@@ -14,7 +14,7 @@ echo "=== G1: Swift Lint ==="
 swiftlint lint --strict --quiet
 
 echo "=== G1: TS Lint ==="
-cd cli && bunx biome check --error-on-warnings . && cd ..
-cd guardian && bunx biome check --error-on-warnings . && cd ..
+cd cli && ../guardian/node_modules/.bin/biome check --error-on-warnings . && cd ..
+cd guardian && ./node_modules/.bin/biome check --error-on-warnings . && cd ..
 
 echo "✓ pre-commit passed"

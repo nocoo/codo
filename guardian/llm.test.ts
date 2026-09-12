@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type OpenAI from "openai";
 import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import {
-  TOOLS,
   ANTHROPIC_TOOLS,
-  COMPLETION_TOKEN_RESERVE,
   buildSystemPrompt,
   buildUserMessage,
+  COMPLETION_TOKEN_RESERVE,
   createLLMClient,
   stringify,
+  TOOLS,
 } from "./llm";
 import { createStateStore, updateState } from "./state";
 import type { GuardianConfig, HookEvent } from "./types";
@@ -35,9 +35,7 @@ function openaiConfig(overrides?: Partial<GuardianConfig>): GuardianConfig {
   };
 }
 
-function anthropicConfig(
-  overrides?: Partial<GuardianConfig>,
-): GuardianConfig {
+function anthropicConfig(overrides?: Partial<GuardianConfig>): GuardianConfig {
   return {
     provider: "anthropic",
     apiKey: "test",
@@ -78,9 +76,7 @@ function createErrorOpenAI(error: Error): OpenAI {
   } as unknown as OpenAI;
 }
 
-function createMockAnthropic(
-  response: Partial<Anthropic.Message>,
-) {
+function createMockAnthropic(response: Partial<Anthropic.Message>) {
   let lastCreateArgs: Record<string, unknown> | undefined;
   const client = {
     messages: {
@@ -510,14 +506,8 @@ describe("Anthropic LLM process", () => {
   });
 
   test("API error falls back to raw notification", async () => {
-    const mockAnthropic = createErrorAnthropic(
-      new Error("overloaded_error"),
-    );
-    const client = createLLMClient(
-      anthropicConfig(),
-      undefined,
-      mockAnthropic,
-    );
+    const mockAnthropic = createErrorAnthropic(new Error("overloaded_error"));
+    const client = createLLMClient(anthropicConfig(), undefined, mockAnthropic);
 
     const state = createStateStore();
     const event = makeEvent({
@@ -566,11 +556,7 @@ describe("Anthropic LLM process", () => {
     };
 
     const mock = createMockAnthropic(mockResponse);
-    const client = createLLMClient(
-      anthropicConfig(),
-      undefined,
-      mock.client,
-    );
+    const client = createLLMClient(anthropicConfig(), undefined, mock.client);
     const state = createStateStore();
     const event = makeEvent({ _hook: "stop", last_assistant_message: "done" });
 
@@ -715,7 +701,7 @@ describe("buildUserMessage object payloads", () => {
     const outputLine = msg.split("\n").find((l) => l.startsWith("Output:"));
     expect(outputLine).toBeDefined();
     // 2000 chars + "..." + "Output: " prefix
-    expect(outputLine!.length).toBeLessThan(2020);
+    expect(outputLine?.length).toBeLessThan(2020);
   });
 
   test("post-tool-use with tool_input object extracts command", () => {

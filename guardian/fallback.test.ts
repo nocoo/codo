@@ -130,9 +130,7 @@ describe("fallbackNotification", () => {
   });
 
   test("SessionEnd → suppressed", () => {
-    const result = fallbackNotification(
-      makeEvent({ _hook: "session-end" }),
-    );
+    const result = fallbackNotification(makeEvent({ _hook: "session-end" }));
     expect(result).toBeNull();
   });
 
@@ -159,9 +157,7 @@ describe("fallbackNotification", () => {
   });
 
   test("Stop with undefined last_assistant_message → suppressed", () => {
-    const result = fallbackNotification(
-      makeEvent({ _hook: "stop" }),
-    );
+    const result = fallbackNotification(makeEvent({ _hook: "stop" }));
     expect(result).toBeNull();
   });
 

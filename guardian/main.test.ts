@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type OpenAI from "openai";
+import type { LLMClient } from "./llm";
 import { processLine } from "./main";
 import { createStateStore } from "./state";
-import type { LLMClient } from "./llm";
 import type { GuardianAction, GuardianResult, HookEvent } from "./types";
 
 // Capture stdout writes
@@ -410,15 +409,15 @@ describe("guardian action meta", () => {
     expect(capture.lines.length).toBe(1);
     const action: GuardianAction = JSON.parse(capture.lines[0]);
     expect(action.meta).toBeDefined();
-    expect(action.meta!.tier).toBe("important");
-    expect(action.meta!.session_id).toBe("s1");
-    expect(action.meta!.hook_type).toBe("stop");
-    expect(action.meta!.model).toBe("test-model");
-    expect(action.meta!.prompt_tokens).toBe(500);
-    expect(action.meta!.completion_tokens).toBe(100);
-    expect(typeof action.meta!.latency_ms).toBe("number");
+    expect(action.meta?.tier).toBe("important");
+    expect(action.meta?.session_id).toBe("s1");
+    expect(action.meta?.hook_type).toBe("stop");
+    expect(action.meta?.model).toBe("test-model");
+    expect(action.meta?.prompt_tokens).toBe(500);
+    expect(action.meta?.completion_tokens).toBe(100);
+    expect(typeof action.meta?.latency_ms).toBe("number");
     // cwd should be present (canonicalized or original)
-    expect(action.meta!.cwd).toBeDefined();
+    expect(action.meta?.cwd).toBeDefined();
   });
 
   test("fallback path emits meta with tier but no LLM fields", async () => {
@@ -453,8 +452,8 @@ describe("guardian action meta", () => {
     if (capture.lines.length > 0) {
       const action: GuardianAction = JSON.parse(capture.lines[0]);
       expect(action.meta).toBeDefined();
-      expect(action.meta!.session_id).toBe("s2");
-      expect(action.meta!.hook_type).toBe("notification");
+      expect(action.meta?.session_id).toBe("s2");
+      expect(action.meta?.hook_type).toBe("notification");
     }
   });
 
@@ -476,7 +475,7 @@ describe("guardian action meta", () => {
     expect(capture.lines.length).toBe(1);
     const action: GuardianAction = JSON.parse(capture.lines[0]);
     expect(action.meta).toBeDefined();
-    expect(action.meta!.cwd).toBeDefined();
+    expect(action.meta?.cwd).toBeDefined();
     expect(action.notification?.cwd).toBeDefined();
   });
 
@@ -511,8 +510,8 @@ describe("guardian action meta", () => {
     expect(capture.lines.length).toBe(1);
     const action: GuardianAction = JSON.parse(capture.lines[0]);
     expect(action.action).toBe("suppress");
-    expect(action.meta!.prompt_tokens).toBe(1000);
-    expect(action.meta!.completion_tokens).toBe(50);
-    expect(action.meta!.model).toBe("gpt-4o");
+    expect(action.meta?.prompt_tokens).toBe(1000);
+    expect(action.meta?.completion_tokens).toBe(50);
+    expect(action.meta?.model).toBe("gpt-4o");
   });
 });

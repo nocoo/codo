@@ -122,10 +122,7 @@ export function createLogger(component: string): Logger {
   return buildLogger(component, undefined);
 }
 
-function buildLogger(
-  component: string,
-  sessionId: string | undefined,
-): Logger {
+function buildLogger(component: string, sessionId: string | undefined): Logger {
   return {
     debug: makeLogFn(component, "DEBUG", sessionId),
     info: makeLogFn(component, "INFO", sessionId),

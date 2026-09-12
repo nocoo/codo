@@ -58,10 +58,7 @@ describe("updateState", () => {
   test("PostToolUse important updates lastStatus", () => {
     const store = createStateStore();
     // First create the project
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -81,10 +78,7 @@ describe("updateState", () => {
 
   test("PostToolUse contextual adds event but no lastStatus", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     const eventsBefore = store.events.length;
     updateState(
@@ -105,10 +99,7 @@ describe("updateState", () => {
 
   test("PostToolUse noise has no state change", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     const eventsBefore = store.events.length;
     updateState(
@@ -127,10 +118,7 @@ describe("updateState", () => {
 
   test("Stop updates task", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -147,10 +135,7 @@ describe("updateState", () => {
 
   test("Stop generic does NOT overwrite specific task", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     // Set a specific task first
     updateState(
@@ -178,10 +163,7 @@ describe("updateState", () => {
 
   test("Notification recorded in recentNotifications", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -200,10 +182,7 @@ describe("updateState", () => {
 
   test("SessionEnd sets sessionActive false", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -221,10 +200,7 @@ describe("updateState", () => {
 describe("evictStaleProjects", () => {
   test("evicts project inactive > maxAge", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     // Manually set lastEventTime to 25 hours ago
     const project = getProject(store, "/tmp/proj");
@@ -236,10 +212,7 @@ describe("evictStaleProjects", () => {
 
   test("keeps project inactive < maxAge", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     evictStaleProjects(store, 24 * 60 * 60 * 1000);
     expect(store.projects.size).toBe(1);
@@ -291,10 +264,7 @@ describe("serializeForPrompt", () => {
 describe("event buffer", () => {
   test("FIFO drops oldest when exceeding max", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     // Push 55 important events
     for (let i = 0; i < 55; i++) {
@@ -316,10 +286,7 @@ describe("event buffer", () => {
 
   test("preserves order", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -506,10 +473,7 @@ describe("updateState object payloads", () => {
 describe("event buffer expanded", () => {
   test("FIFO cap at 200", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     // Push 210 important events
     for (let i = 0; i < 210; i++) {
@@ -536,10 +500,7 @@ describe("event buffer expanded", () => {
 describe("notification body stored", () => {
   test("body field is recorded from message", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -559,10 +520,7 @@ describe("notification body stored", () => {
 
   test("body is undefined when message is not a string", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -785,10 +743,7 @@ describe("sessionToCwd cleanup", () => {
 
     // Create session attached to surviving project but not in events
     // (simulated by directly populating sessionToCwd + project)
-    store.sessionToCwd.set(
-      "sess-on-project",
-      canonicalizePath("/tmp/proj-b"),
-    );
+    store.sessionToCwd.set("sess-on-project", canonicalizePath("/tmp/proj-b"));
     store.projects.set(canonicalizePath("/tmp/proj-b"), {
       cwd: canonicalizePath("/tmp/proj-b"),
       sessionId: "sess-on-project",
@@ -838,10 +793,7 @@ describe("summarizeEvent expanded truncation", () => {
 
   test("notification includes message in summary", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -853,19 +805,14 @@ describe("summarizeEvent expanded truncation", () => {
       }),
     );
 
-    const notifEvent = store.events.find(
-      (e) => e.hookType === "notification",
-    );
+    const notifEvent = store.events.find((e) => e.hookType === "notification");
     expect(notifEvent?.summary).toContain("Build done");
     expect(notifEvent?.summary).toContain("Release package compiled");
   });
 
   test("post-tool-use includes tool_response in summary", () => {
     const store = createStateStore();
-    updateState(
-      store,
-      makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }),
-    );
+    updateState(store, makeEvent({ _hook: "session-start", cwd: "/tmp/proj" }));
 
     updateState(
       store,
@@ -878,9 +825,7 @@ describe("summarizeEvent expanded truncation", () => {
       }),
     );
 
-    const toolEvent = store.events.find(
-      (e) => e.hookType === "post-tool-use",
-    );
+    const toolEvent = store.events.find((e) => e.hookType === "post-tool-use");
     expect(toolEvent?.summary).toContain("→");
     expect(toolEvent?.summary).toContain("42 tests passed");
   });
@@ -1017,7 +962,7 @@ describe("serializeForPrompt notification history", () => {
       /#### Sent Notifications\n([\s\S]*?)(?=\n####|\n###|\n##|$)/,
     );
     expect(sentNotifMatch).toBeTruthy();
-    const sentSection = sentNotifMatch![1];
+    const sentSection = sentNotifMatch?.[1];
     // Only the last 3 should appear in Sent Notifications
     expect(sentSection).not.toContain("Notif-0");
     expect(sentSection).not.toContain("Notif-1");
@@ -1117,8 +1062,8 @@ describe("serializeForPrompt project grouping", () => {
 
     const result = serializeForPrompt(store);
     // Should have project-level headings
-    expect(result).toContain("### " + canonicalizePath("/tmp/proj-a"));
-    expect(result).toContain("### " + canonicalizePath("/tmp/proj-b"));
+    expect(result).toContain(`### ${canonicalizePath("/tmp/proj-a")}`);
+    expect(result).toContain(`### ${canonicalizePath("/tmp/proj-b")}`);
     expect(result).toContain("Event Timeline");
   });
 
@@ -1233,11 +1178,11 @@ describe("serializeForPrompt budget accuracy", () => {
     expect(notifSection).toBeTruthy();
 
     // Only most recent 3 (Notif-2, Notif-3, Notif-4) should appear
-    expect(notifSection![1]).not.toContain("Notif-0");
-    expect(notifSection![1]).not.toContain("Notif-1");
-    expect(notifSection![1]).toContain("Notif-2");
-    expect(notifSection![1]).toContain("Notif-3");
-    expect(notifSection![1]).toContain("Notif-4");
+    expect(notifSection?.[1]).not.toContain("Notif-0");
+    expect(notifSection?.[1]).not.toContain("Notif-1");
+    expect(notifSection?.[1]).toContain("Notif-2");
+    expect(notifSection?.[1]).toContain("Notif-3");
+    expect(notifSection?.[1]).toContain("Notif-4");
   });
 
   test("structural overhead: output stays within reasonable budget bounds", () => {
