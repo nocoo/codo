@@ -63,7 +63,7 @@ Status: `enforced` | `planned` | `manual` | `N/A`. `enforced` Evidence = hook/CI
 
 Org gaps: index-snapshot pre-commit; stdin-range pre-push; TS coverage thresholds; Swift coverage fail-under (CI enables coverage, no % gate); G2 on hooks.
 
-Today: pre-commit `swift test` + cli/guardian `bun test` + SwiftLint + Biome (working tree). pre-push repeats that then `scripts/integration-test.sh`. CI: macOS `swift test --enable-code-coverage`; Ubuntu bun test + Biome + gitleaks. OSV runs with `|| true` (not a gate).
+Today: pre-commit `swift test` + cli/guardian `bun test` + SwiftLint + Biome (working tree). pre-push repeats that then `scripts/integration-test.sh`. CI inherits base-ci: macOS `swift test --enable-code-coverage`; Ubuntu cli/guardian tests + locked Guardian Biome; required OSV and full-history Gitleaks. OSV scans `guardian/bun.lock` explicitly; the CLI has no dependency lockfile.
 
 | Change | Proof | Status | Evidence |
 |---|---|---|---|
@@ -73,7 +73,7 @@ Today: pre-commit `swift test` + cli/guardian `bun test` + SwiftLint + Biome (wo
 | Native UI | menubar/toast checklist | manual | `scripts/e2e-test.sh` |
 | Types / lint | SwiftLint strict + Biome 0 warning | enforced | pre-commit + CI Biome |
 | G2 secrets | gitleaks | enforced | CI only (not husky) |
-| G2 deps | osv cli + guardian lockfiles | planned | CI `osv-scanner … \|\| true` |
+| G2 deps | OSV Guardian lockfile scan | enforced | CI shared `security` job, `lockfiles: guardian/bun.lock` |
 | Bundler | `scripts/build.sh` → `.build/release/Codo.app` | manual | operator |
 | Docs | numbered doc if behavior changes | manual | human review |
 | Release | copy CLI/hook + app via `install.sh` | manual | `./scripts/install.sh` |

@@ -23,7 +23,6 @@ jobs:
     uses: nocoo/base-ci/.github/workflows/security.yml@ad43150de3a2be2fa464b5cd2f921dc4fa9f8f0f
     with:
       lockfiles: guardian/bun.lock
-      osv-config: osv-scanner.toml
       gitleaks-config: .gitleaks.toml
       scan-history: true
 'on':
