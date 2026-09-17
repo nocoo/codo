@@ -64,7 +64,7 @@ swiftlint lint --strict --quiet
 | L1 TypeScript | Statements, branches, functions and lines each ≥95%; no `.skip` / `.only` | planned | Commit/CI run CLI/Guardian Bun tests without coverage thresholds |
 | L2 IPC | Real Swift server/Bun client protocol and failure-path integration | enforced | Pre-push requires `scripts/integration-test.sh`, builds `CodoTestServer` and uses a temporary socket; no application HTTP API exists |
 | L3 native UI | Menubar, banner and Guardian user journeys | manual | `scripts/e2e-test.sh` is an interactive checklist that restarts Codo; run only for explicit desktop validation |
-| G1 Swift | Strict check-only lint and successful compilation | enforced | Local SwiftLint strict and native test build; CI native test compilation |
+| G1 Swift | Strict check-only static analysis, zero errors/warnings | planned | Local strict SwiftLint and plain `swift test`; CI enables test coverage, but compiler warnings-as-errors and the complete static gate are missing |
 | G1 TypeScript | Strict types and check-only lint, zero errors/warnings | planned | Local/CI Biome runs, but Guardian has no tsconfig and CI disables typechecking |
 | G2 security | Secret and dependency scans; missing scanner fails | enforced | CI scans full Git history and `guardian/bun.lock`; local hooks omit G2 |
 | D1 isolation | Per-run local socket/data/preferences and guarded cleanup | planned | Integration allocates fake home directories but shares `/tmp/codo-integ-stderr.txt`; complete per-run/cleanup guarantees are missing |
@@ -85,8 +85,9 @@ Daily app/socket/logs/database live under the machine owner's directories. IPC t
 ## Operations / Release
 
 For an authorized local install, the machine owner runs `./scripts/build.sh`, then `./scripts/install.sh` with the intended signing identity. There is no GitHub deployment automation. Keep the signature stable for permissions and account for the Guardian packaging gap.
-After installation, verify the Codo/Guardian process state, socket and expected notification locally. Preserve hook exit codes before logging; installed CLI/hook copies must be refreshed after changes.
+After installation, verify the Codo/Guardian process state, socket and expected notification locally. Installed CLI/hook copies must be refreshed after changes.
 
 ## Retrospective
 
 Narratives remain in [Retrospective.md](Retrospective.md); keep only recurring rules here, cross-project lessons in global rules/nmem and deterministic requirements in hooks/tests.
+- Capture hook exit status before logging; use `PIPESTATUS` for pipelines and never trust `$?` after `echo`.
