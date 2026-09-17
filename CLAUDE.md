@@ -1,106 +1,92 @@
 # Codo
 
-macOS menubar notification daemon for Claude Code hooks: Swift `Codo.app` + Bun CLI + Guardian subprocess.
-Profile: native-hybrid
-Direction: [docs/architecture/01-system-design.md](docs/architecture/01-system-design.md). Frameworks must not rewrite this file.
+macOS menubar notification daemon with a Swift app, Bun CLI and optional Guardian subprocess.
+Profile: native-hybrid, with Swift and TypeScript lanes.
+Direction: [system design](docs/architecture/01-system-design.md). Frameworks must not rewrite this file.
 
 ## Sources of Truth
 
-This file is the **contract**. Hooks, CI, and config are **enforcement**. If they disagree, raise enforcement; never lower this file.
+This file is the contract; hooks, CI and configuration enforce it. Raise weaker enforcement instead of lowering this contract.
 
 | Fact | Where |
 |---|---|
-| Agent handbook | this file |
-| Human docs | README.md, `docs/architecture/*`, `docs/features/*` |
-| Version | independently set in root/`cli/`/`guardian/` `package.json`, `cli/codo.ts` `VERSION`, `CodoInfo.version`, `Resources/Info.plist` |
-| Enforcement | `.husky/*`, `.github/workflows/ci.yml` |
-| Machine rules | global `AGENTS.md`, `rules/git-commit.md` |
-| Accidents | [Retrospective.md](Retrospective.md) |
-| Env files | omit. API keys in Keychain (`CODO_API_KEY`); never in git |
+| Human docs | [README.md](README.md), `docs/architecture/`, `docs/features/` |
+| Version | Root/CLI/Guardian manifests, CLI `VERSION`, `CodoInfo.version`, `Resources/Info.plist`; synchronize for an authorized release |
+| Enforcement | `.husky/`, `.github/workflows/ci.yml`, native and Bun tests |
+| Secrets | macOS Keychain; app injects Guardian variables such as `CODO_PROVIDER` and `CODO_API_KEY` |
+| Machine rules / accidents | Global `AGENTS.md` and `rules/`; [Retrospective.md](Retrospective.md) |
 
 ## Project Invariants
 
-- `cli/codo.ts` and `hooks/claude-hook.sh` are **copied** to `~/.codo/` by `scripts/install.sh`, not symlinked. After editing them, recopy or install again.
-- Socket `~/.codo/codo.sock`. App is `LSUIElement` menubar (no Dock). Guardian is `guardian/main.ts` stdin/stdout JSON; stderr → `~/.codo/guardian.log`.
-- API keys stay in Keychain. Guardian env is injected by the app (`CODO_PROVIDER`, `CODO_API_KEY`, …).
-- Integration tests use a fake `HOME` + `CodoTestServer`. Do not point them at the human `~/.codo`.
-- macOS 14+, Swift 5.10, Bun, SwiftLint.
+- The app is `LSUIElement` menubar-only. CLI JSON messages use the Unix socket `~/.codo/codo.sock`; Guardian uses stdin/stdout JSON and stderr logging under `~/.codo/`.
+- Installer copies CLI and hook files to `~/.codo/`; they are not symlinks. Recopy/reinstall after an authorized CLI/hook deployment.
+- Keep API keys in Keychain. Guardian decides notification suppression/content, never executes terminal commands; failure falls back to basic notification rules.
+- Tests use injected preferences, fake model providers and a temporary home/socket. Never point them at the user's live daemon, database or credentials.
+- Preserve protocol fields even where current custom banners do not implement sound/thread grouping. Do not claim OS notification behavior the app does not provide.
+- App packaging currently omits `guardian/` and dependencies; installed `~/Applications/Codo.app` cannot rely on the repo-layout Guardian resolver. Track this as a packaging gap, not a reason to mutate the live installation during tests.
 
 ## Stack / Layout
 
 | Component | Choice |
 |---|---|
-| Language | Swift 5.10 (app/core) + TypeScript (cli + guardian, Bun) |
-| Package manager | SwiftPM + Bun (`cli/`, `guardian/`) |
-| Runtime | macOS menubar app + Unix socket CLI |
-| Lint | SwiftLint `--strict`; Biome `--error-on-warnings` on cli/guardian |
-| Tests | `swift test`; `bun test` in cli + guardian; `scripts/integration-test.sh` |
-| Data | local socket + logs under `~/.codo/` |
-
-```
-Sources/Codo  Sources/CodoCore  Tests/CodoCoreTests
-cli/  guardian/  hooks/  scripts/
-```
+| Native | macOS 14+, Swift package 5.10, SwiftUI/AppKit, SQLite/Keychain |
+| Toolchain | Xcode with Swift Testing, SwiftLint, Bun; CI Bun 1.4.2 |
+| `Sources/Codo/`, `Sources/CodoCore/` | App, IPC, storage and Guardian management |
+| `Sources/CodoTestServer/`, `Tests/` | Isolated socket host and native tests |
+| `cli/`, `guardian/`, `hooks/`, `scripts/` | Bun processes, hook integration, build/install/checks |
 
 ## Commands
 
+Run each line independently from the root. Install root hook tooling and Guardian dependencies separately; CLI has no dependency lockfile. Unit and IPC tests need no real model key. Use full Xcode: if the machine selects Command Line Tools, prefix the check/commit/push with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` so SwiftUI macros resolve.
+
 ```bash
-bun install
+bun install --frozen-lockfile
+bun install --cwd guardian --frozen-lockfile
+swift build
 swift test
-cd cli && bun test
-cd guardian && bun test
+(cd cli && bun test)
+(cd guardian && bun test)
 swiftlint lint --strict --quiet
-cd cli && bunx biome check --error-on-warnings .
-cd guardian && bunx biome check --error-on-warnings .
-./scripts/build.sh
-./scripts/install.sh
+(cd cli && ../guardian/node_modules/.bin/biome check --error-on-warnings .)
+(cd guardian && ./node_modules/.bin/biome check --error-on-warnings .)
 ./scripts/integration-test.sh
 ```
 
+`swift build` creates executables; `./scripts/build.sh` additionally assembles/signs `.build/release/Codo.app` using full Xcode and the configured Apple Development identity. Packaging/install and native UI checks are explicit manual operations, not prerequisites for a documentation edit.
+
 ## Verification
 
-Status: `enforced` | `planned` | `manual` | `N/A`. `enforced` Evidence = hook/CI/config/script.
+6DQ = L1/L2/L3 + G1/G2 + D1. Status: `enforced`, `planned`, `manual`, `N/A`.
 
-Org gaps: index-snapshot pre-commit; stdin-range pre-push; TS coverage thresholds; Swift coverage fail-under (CI enables coverage, no % gate); G2 on hooks.
-
-Today: pre-commit `swift test` + cli/guardian `bun test` + SwiftLint + Biome (working tree). pre-push repeats that then `scripts/integration-test.sh`. CI inherits base-ci: macOS `swift test --enable-code-coverage`; Ubuntu cli/guardian tests + locked Guardian Biome; required OSV and full-history Gitleaks. OSV scans `guardian/bun.lock` explicitly; the CLI has no dependency lockfile.
-
-| Change | Proof | Status | Evidence |
+| Dimension | Required proof | Status | Current enforcement / gap |
 |---|---|---|---|
-| Logic Swift | `swift test` | enforced | pre-commit; CI `swift-tests` |
-| Logic TS | `bun test` cli + guardian (no coverage %) | enforced | pre-commit; CI `quality` |
-| IPC L2 | UDS against `CodoTestServer` + fake HOME | enforced | pre-push `scripts/integration-test.sh` (must exist) |
-| Native UI | menubar/toast checklist | manual | `scripts/e2e-test.sh` |
-| Types / lint | SwiftLint strict + Biome 0 warning | enforced | pre-commit + CI Biome |
-| G2 secrets | gitleaks | enforced | CI only (not husky) |
-| G2 deps | OSV Guardian lockfile scan | enforced | CI shared `security` job, `lockfiles: guardian/bun.lock` |
-| Bundler | `scripts/build.sh` → `.build/release/Codo.app` | manual | operator |
-| Docs | numbered doc if behavior changes | manual | human review |
-| Release | copy CLI/hook + app via `install.sh` | manual | `./scripts/install.sh` |
+| L1 Swift | Measurable statements/branches/functions/lines each ≥95%; no skipped/focused tests | planned | Commit/CI run native tests; CI enables coverage but has no percentage gate or complete four-metric report |
+| L1 TypeScript | Statements, branches, functions and lines each ≥95%; no `.skip` / `.only` | planned | Commit/CI run CLI/Guardian Bun tests without coverage thresholds |
+| L2 IPC | Real Swift server/Bun client protocol and failure-path integration | enforced | Pre-push requires `scripts/integration-test.sh`, builds `CodoTestServer` and uses a temporary socket; no application HTTP API exists |
+| L3 native UI | Menubar, banner and Guardian user journeys | manual | `scripts/e2e-test.sh` is an interactive checklist that restarts Codo; run only for explicit desktop validation |
+| G1 Swift | Strict check-only lint and successful compilation | enforced | Local SwiftLint strict and native test build; CI native test compilation |
+| G1 TypeScript | Strict types and check-only lint, zero errors/warnings | planned | Local/CI Biome runs, but Guardian has no tsconfig and CI disables typechecking |
+| G2 security | Secret and dependency scans; missing scanner fails | enforced | CI scans full Git history and `guardian/bun.lock`; local hooks omit G2 |
+| D1 isolation | Per-run local socket/data/preferences and guarded cleanup | planned | Integration allocates fake home directories but shares `/tmp/codo-integ-stderr.txt`; complete per-run/cleanup guarantees are missing |
+| Build / packaging | Intended app bundle and Guardian resources | manual | `scripts/build.sh`; installed Guardian path remains incomplete |
+| Docs | Native, IPC and installed-copy behavior reviewed | manual | Architecture/features and README |
 
-Index-snapshot pre-commit and stdin-range pre-push are planned. `--no-verify` forbidden on commits and branch pushes.
+| Hook | Current behavior | Required follow-up |
+|---|---|---|
+| pre-commit | Working-tree Swift/CLI/Guardian tests, SwiftLint and Biome | G1+L1 coverage on index snapshot, <30s |
+| pre-push | Repeats tests/lint, then IPC integration | Applicable integration+G2 on stdin push refs, <3min |
+
+Install restores Husky. Hooks are check-only; never use `--no-verify` on commits or branch pushes. CI shared workflows are pinned at `ad43150de3a2be2fa464b5cd2f921dc4fa9f8f0f`.
 
 ## Resources / Isolation
 
-| Purpose | Port / resource | Isolation |
-|---|---|---|
-| Dev/install | `~/.codo/codo.sock`, `~/Applications/Codo.app` | human machine |
-| Integration | temp `$HOME/.codo` | `mktemp` in `integration-test.sh` |
+Daily app/socket/logs/database live under the machine owner's directories. IPC tests create a fresh local socket and remove only their own allocation. Use per-run preferences/databases for native tests; do not share the daily user's resources or contact real model providers. No remote `-test` infrastructure is needed.
 
 ## Operations / Release
 
-- Entry: `./scripts/build.sh` then `./scripts/install.sh`. Who: the machine owner (codesign local). No GitHub CD.
-- `build.sh` does **not** copy `guardian/` into `Codo.app/Contents/Resources/`. Production `GuardianPathResolver` path is unimplemented; Guardian only resolves by walking up from a repo `.build` layout. `~/Applications/Codo.app` will not launch Guardian.
-- After CLI/hook edits, recopy to `~/.codo`. Live-check: `ps` for Codo/guardian, `ls ~/.codo/codo.sock`, `echo '{"title":"Test","body":"Hello"}' | bun ~/.codo/codo.ts`.
+For an authorized local install, the machine owner runs `./scripts/build.sh`, then `./scripts/install.sh` with the intended signing identity. There is no GitHub deployment automation. Keep the signature stable for permissions and account for the Guardian packaging gap.
+After installation, verify the Codo/Guardian process state, socket and expected notification locally. Preserve hook exit codes before logging; installed CLI/hook copies must be refreshed after changes.
 
 ## Retrospective
 
-| Kind | Where |
-|---|---|
-| Accident narrative | [Retrospective.md](Retrospective.md) |
-| Recurring project rule | one line here (cap ~10) |
-| Checkable rule | hook or test |
-
-- Installed CLI/hook are copies. Recopy after edits.
-- Do not trust `$?` after `echo` in hook scripts (`PIPESTATUS`).
-- Do not expect Guardian from `~/Applications/Codo.app` until `build.sh` packs `guardian/`.
+Narratives remain in [Retrospective.md](Retrospective.md); keep only recurring rules here, cross-project lessons in global rules/nmem and deterministic requirements in hooks/tests.
