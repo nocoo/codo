@@ -58,13 +58,6 @@ struct LiveEventStream: View {
             Text(event.summary)
                 .font(.callout)
                 .lineLimit(1)
-
-            if let action = event.action {
-                Spacer()
-                Text(action)
-                    .font(.caption)
-                    .foregroundStyle(action == "send" ? .green : .orange)
-            }
         }
         .padding(.vertical, 2)
     }

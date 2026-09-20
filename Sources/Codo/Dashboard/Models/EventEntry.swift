@@ -8,7 +8,6 @@ struct EventEntry: Identifiable {
     let projectCwd: String?     // canonical cwd for reliable project filtering
     let projectName: String?    // display name (basename of cwd)
     let summary: String
-    let action: String?
 
     init(
         id: UUID = UUID(),
@@ -16,8 +15,7 @@ struct EventEntry: Identifiable {
         hookType: String,
         projectCwd: String? = nil,
         projectName: String? = nil,
-        summary: String,
-        action: String? = nil
+        summary: String
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -25,6 +23,5 @@ struct EventEntry: Identifiable {
         self.projectCwd = projectCwd
         self.projectName = projectName
         self.summary = summary
-        self.action = action
     }
 }
