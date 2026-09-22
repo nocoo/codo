@@ -2,7 +2,7 @@
 
 macOS menubar notification daemon with a Swift app, Bun CLI and optional Guardian subprocess.
 Profile: native-hybrid, with Swift and TypeScript lanes.
-Direction: [system design](docs/architecture/01-system-design.md). Frameworks must not rewrite this file.
+Human overview: [README.md](README.md). Direction: [system design](docs/architecture/01-system-design.md). Frameworks must not rewrite this file. Maintain this root `AGENTS.md` as the only project handbook; do not create a `CLAUDE.md` alias, copy or import.
 
 ## Sources of Truth
 
@@ -56,16 +56,14 @@ swiftlint lint --strict --quiet
 
 ## Verification
 
-6DQ = L1/L2/L3 + G1/G2 + D1. Status: `enforced`, `planned`, `manual`, `N/A`.
+6DQ = L1/L2/L3 + G2 + D1; the former G1 dimension was merged into L1 on 2026-09-21, per language lane. Status: `enforced`, `planned`, `manual`, `N/A`.
 
 | Dimension | Required proof | Status | Current enforcement / gap |
 |---|---|---|---|
-| L1 Swift | Measurable statements/branches/functions/lines each ≥95%; no skipped/focused tests | planned | Commit/CI run native tests; CI enables coverage but has no percentage gate or complete four-metric report |
-| L1 TypeScript | Statements, branches, functions and lines each ≥95%; no `.skip` / `.only` | planned | Commit/CI run CLI/Guardian Bun tests without coverage thresholds |
+| L1 Swift (incl. former G1 Swift static) | Measurable statements/branches/functions/lines each ≥95%; no skipped/focused tests; strict check-only static analysis with zero errors/warnings | planned | Commit/CI run native tests; CI enables coverage but has no percentage gate or complete four-metric report. Local strict SwiftLint and plain `swift test`; compiler warnings-as-errors and the complete static gate are missing |
+| L1 TypeScript (incl. former G1 TypeScript static) | Statements, branches, functions and lines each ≥95%; no `.skip` / `.only`; strict types and check-only lint, zero errors/warnings | planned | Commit/CI run CLI/Guardian Bun tests without coverage thresholds. Local/CI Biome runs, but Guardian has no tsconfig and CI disables typechecking |
 | L2 IPC | Real Swift server/Bun client protocol and failure-path integration | enforced | Pre-push requires `scripts/integration-test.sh`, builds `CodoTestServer` and uses a temporary socket; no application HTTP API exists |
 | L3 native UI | Menubar, banner and Guardian user journeys | manual | `scripts/e2e-test.sh` is an interactive checklist that restarts Codo; run only for explicit desktop validation |
-| G1 Swift | Strict check-only static analysis, zero errors/warnings | planned | Local strict SwiftLint and plain `swift test`; CI enables test coverage, but compiler warnings-as-errors and the complete static gate are missing |
-| G1 TypeScript | Strict types and check-only lint, zero errors/warnings | planned | Local/CI Biome runs, but Guardian has no tsconfig and CI disables typechecking |
 | G2 security | Secret and dependency scans; missing scanner fails | enforced | CI scans full Git history and `guardian/bun.lock`; local hooks omit G2 |
 | D1 isolation | Per-run local socket/data/preferences and guarded cleanup | planned | Integration allocates fake home directories but shares `/tmp/codo-integ-stderr.txt`; complete per-run/cleanup guarantees are missing |
 | Build / packaging | Intended app bundle and Guardian resources | manual | `scripts/build.sh`; installed Guardian path remains incomplete |
@@ -73,7 +71,7 @@ swiftlint lint --strict --quiet
 
 | Hook | Current behavior | Required follow-up |
 |---|---|---|
-| pre-commit | Working-tree Swift/CLI/Guardian tests, SwiftLint and Biome | G1+L1 coverage on index snapshot, <30s |
+| pre-commit | Working-tree Swift/CLI/Guardian tests, SwiftLint and Biome | Unified L1 coverage/static on index snapshot, <30s |
 | pre-push | Repeats tests/lint, then IPC integration | Applicable integration+G2 on stdin push refs, <3min |
 
 Install restores Husky. Hooks are check-only; never use `--no-verify` on commits or branch pushes. CI shared workflows are pinned at `ad43150de3a2be2fa464b5cd2f921dc4fa9f8f0f`.
